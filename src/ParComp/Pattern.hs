@@ -1,14 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
 
 -- | Pattern matching for items and deduction rules
 
 
 module ParComp.Pattern
-  ( Pattern (..)
-  , Env
---   , match
---   , evalMatch
+  ( Grammar
+  , emptyGram
+  , Pattern (..)
+  , Cond (..)
+  , Rule (..)
+  , apply
   ) where
 
 
@@ -90,12 +93,12 @@ type MatchM sym var a = MaybeT (RWS.RWS (Grammar sym) () (Env sym var)) a
 
 
 -- | Evaluate pattern matching.
-evalMatch :: Grammar sym -> MatchM sym var () -> Maybe (Env sym var)
+evalMatch :: Grammar sym -> MatchM sym var a -> Maybe (a, Env sym var)
 evalMatch gram m =
   let (val, env, _) = RWS.runRWS (runMaybeT m) gram M.empty
    in case val of
         Nothing -> Nothing
-        Just _  -> Just env
+        Just x  -> Just (x, env)
 
 
 -- | Retrieve the item expression bound to the given variable.
@@ -222,6 +225,8 @@ data Cond sym var
   | Or (Cond sym var) (Cond sym var)
   -- | > Logical negation
   | Neg (Cond sym var)
+  -- | > Always True
+  | CTrue
   deriving (Show, Eq, Ord)
 
 
@@ -244,6 +249,48 @@ check cond =
     And cx cy -> (&&) <$> check cx <*> check cy
     Or cx cy  -> (||) <$> check cx <*> check cy
     Neg c -> not <$> check c
+    CTrue -> return True
+
+
+--------------------------------------------------
+-- Deduction rules
+--------------------------------------------------
+
+
+-- | Single deduction rule
+data Rule sym var = Rule
+  { antecedents :: [Pattern sym var]
+    -- ^ The list of rule's antecedents
+  , consequent :: Pattern sym var
+    -- ^ The rule's consequent
+  , condition :: Cond sym var
+  } deriving (Show, Eq, Ord)
+
+
+-- | Apply the deduction rule to the given items.  If the application succeeds,
+-- the new chart item is returned.
+--
+-- The function treats the list of items as ordered and does not try other item
+-- permutations when matching them with the `antecedents`.
+--
+apply
+  :: (Eq sym, Ord var)
+  => Grammar sym
+  -> Rule sym var
+  -> [Item sym]
+  -> Maybe (Item sym)
+apply gram Rule{..} items = do
+  guard $ length antecedents == length items
+  (res, _env) <- evalMatch gram $ do
+    -- Match antecedents with the corresponding items
+    mapM_
+      (uncurry match)
+      (zip antecedents items)
+    -- Make sure the side condition holds
+    check condition >>= guard
+    -- Convert the consequent to the resulting item
+    close consequent
+  return res
 
 
 --------------------------------------------------
