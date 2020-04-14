@@ -3,21 +3,11 @@
 
 module ParComp.Item
   ( Item(..)
-  , Val(..)
   , list
   ) where
 
 
 import qualified Data.Text as T
-
-
--- | Primitive value
-data Val
-  -- | > Integer
-  = VInt Int
-  -- | > String
-  | VStr T.Text
-  deriving (Show, Eq, Ord)
 
 
 -- | Chart item expression
@@ -34,8 +24,8 @@ data Item sym
 
 
 -- | List encoding
-list :: [sym] -> Item sym
+list :: [Item sym] -> Item sym
 list xs =
   case xs of
+    (x : xs') -> Pair x (list xs')
     [] -> Unit
-    (x : xs') -> Pair (Sym x) (list xs')
