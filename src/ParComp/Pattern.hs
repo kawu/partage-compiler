@@ -11,15 +11,18 @@ module ParComp.Pattern
   , Cond (..)
   , Rule (..)
   , apply
+  , runMatch
   ) where
 
 
 -- import           Prelude hiding (Integer, either)
 import           Control.Monad (guard)
-import           Control.Applicative (empty)
+import           Control.Applicative (empty, (<|>))
 import           Control.Monad.Trans.Maybe (MaybeT(..))
 import qualified Control.Monad.State.Strict as S
 import qualified Control.Monad.RWS.Strict as RWS
+
+import qualified Pipes as P
 
 import qualified Data.Text as T
 import qualified Data.Set as Set
@@ -106,27 +109,26 @@ type Env sym var = M.Map var (Item sym)
 
 
 -- | Pattern matching monad
-type MatchM sym var a = MaybeT (S.State (Env sym var)) a
+type MatchT m sym var a = P.ListT (S.StateT (Env sym var) m) a
 -- type MatchM sym var a = MaybeT (RWS.RWS (Grammar sym) () (Env sym var)) a
 
 
 -- | Evaluate pattern matching.
-evalMatch :: MatchM sym var a -> Maybe (a, Env sym var)
-evalMatch m =
-  let (val, env) = S.runState (runMaybeT m) M.empty
-   in case val of
-        Nothing -> Nothing
-        Just x  -> Just (x, env)
--- evalMatch :: Grammar sym -> MatchM sym var a -> Maybe (a, Env sym var)
--- evalMatch gram m =
---   let (val, env, _) = RWS.runRWS (runMaybeT m) gram M.empty
+-- evalMatch :: MatchM sym var a -> Maybe (a, Env sym var)
+-- evalMatch m =
+--   let (val, env) = S.runState (runMaybeT m) M.empty
 --    in case val of
 --         Nothing -> Nothing
 --         Just x  -> Just (x, env)
 
 
+-- | Evaluate pattern matching.
+runMatch :: (Monad m) => MatchT m sym var a -> m ()
+runMatch = flip S.evalStateT M.empty . P.runListT
+
+
 -- | Retrieve the item expression bound to the given variable.
-retrieve :: Ord var => var -> MatchM sym var (Item sym)
+retrieve :: (Monad m, Ord var) => var -> MatchT m sym var (Item sym)
 retrieve v = do
   mayIt <- S.gets (M.lookup v)
   case mayIt of
@@ -181,7 +183,7 @@ retrieve v = do
 
 -- | Bind the item to the given variable.  If the variable is already bound,
 -- make sure that the new item is equal to the old one.
-bind :: (Eq sym, Ord var) => var -> Item sym -> MatchM sym var ()
+bind :: (Monad m, Eq sym, Ord var) => var -> Item sym -> MatchT m sym var ()
 bind v it = do
   mayIt <- S.lift $ S.gets (M.lookup v)
   case mayIt of
@@ -189,8 +191,8 @@ bind v it = do
     Just it' -> guard $ it == it'
 
 
--- | Perform matching with a local environment.
-withLocalEnv :: MatchM sym var a -> MatchM sym var a
+-- | Perform matching in a local environment.
+withLocalEnv :: (Monad m) => MatchT m sym var a -> MatchT m sym var a
 withLocalEnv m = do
   env <- S.get
   x <- m
@@ -203,10 +205,10 @@ withLocalEnv m = do
 -- expression, which is not necessarily the same as the input item due to the
 -- `Let` pattern construction, which allows to change the matching result.
 match
-  :: (Show sym, Show var, Eq sym, Ord var)
+  :: (Monad m, Show sym, Show var, Eq sym, Ord var)
   => Pattern sym var
   -> Item sym
-  -> MatchM sym var (Item sym)
+  -> MatchT m sym var (Item sym)
 match pt it =
   case (pt, it) of
     (Const it', it) -> do
@@ -234,14 +236,20 @@ match pt it =
       return it
     (OrP p1 p2, it) -> do
       env <- S.get
-      S.lift (runMaybeT $ match p1 it) >>= \case
-        Just x -> return x
-        Nothing -> do
-          S.put env
-          match p2 it
-    (AndP p1 p2, it) -> do
-      match p1 it
-      match p2 it
+      match p1 it <|> do
+        S.put env
+        match p2 it
+--     (OrP p1 p2, it) -> do
+--       env <- S.get
+--       S.lift (runMaybeT $ match p1 it) >>= \case
+--         Just x -> return x
+--         Nothing -> do
+--           S.put env
+--           match p2 it
+    (AndP p1 p2, it) -> error "AndP not implemented yet!"
+--     (AndP p1 p2, it) -> do
+--       match p1 it
+--       match p2 it
     (Let x e y, it) -> do
       it' <- match e it
       withLocalEnv $ do
@@ -260,7 +268,10 @@ match pt it =
 --
 -- TODO: What about logical (conjunction/disjunction) patterns?  Let and Via?
 --
-close :: (Eq sym, Ord var) => Pattern sym var -> MatchM sym var (Item sym)
+close
+  :: (Monad m, Eq sym, Ord var)
+  => Pattern sym var
+  -> MatchT m sym var (Item sym)
 close p =
   case p of
     Const it -> return it
@@ -320,13 +331,13 @@ data Cond sym var
 
 
 -- | Check the side condition expression.  Note that `check` does not modify
--- the `Env`ironment, nor should it fail.  We keep it in the `MatchM` monad for
+-- the `Env`ironment, nor should it fail.  We keep it in the `MatchT` monad for
 -- simplicity.
 --
 -- TODO: Consider putting `check` in its own monad, to enforce that it
 -- satisfies the conditions described above.
 --
-check :: (Eq sym, Ord var) => Cond sym var -> MatchM sym var Bool
+check :: (Monad m, Eq sym, Ord var) => Cond sym var -> MatchT m sym var Bool
 check cond =
   case cond of
     Eq px py  -> (==) <$> close px <*> close py
@@ -361,23 +372,22 @@ data Rule sym var = Rule
 -- permutations when matching them with the `antecedents`.
 --
 apply
-  :: (Show sym, Show var, Eq sym, Ord var)
+  :: (Monad m, Show sym, Show var, Eq sym, Ord var)
   -- => Grammar sym
   => Rule sym var
   -> [Item sym]
-  -> Maybe (Item sym)
+  -- -> Maybe (Item sym)
+  -> MatchT m sym var (Item sym)
 apply Rule{..} items = do
   guard $ length antecedents == length items
-  (res, _env) <- evalMatch $ do
-    -- Match antecedents with the corresponding items
-    mapM_
-      (uncurry match)
-      (zip antecedents items)
-    -- Make sure the side condition holds
-    check condition >>= guard
-    -- Convert the consequent to the resulting item
-    close consequent
-  return res
+  -- Match antecedents with the corresponding items
+  mapM_
+    (uncurry match)
+    (zip antecedents items)
+  -- Make sure the side condition holds
+  check condition >>= guard
+  -- Convert the consequent to the resulting item
+  close consequent
 
 
 --------------------------------------------------
@@ -385,52 +395,43 @@ apply Rule{..} items = do
 --------------------------------------------------
 
 
-leftP :: Pattern sym T.Text
-leftP = Pair
-  (Pair (Var "A") (Pair (Var "B") (Var "beta")))
-  (Pair (Var "i") (Var "j"))
-
-
-rightP :: Pattern sym T.Text
-rightP = Pair
-  (Pair (Var "B") (Const I.Unit))
-  (Pair (Var "j") (Var "k"))
-
-
--- | Primitive value
-data Val
-  -- | > Integer
-  = VInt Int
-  -- | > String
-  | VStr T.Text
-  deriving (Show, Eq, Ord)
-
-
-main :: IO ()
-main = do
-  let triple x y z = I.Pair x (I.Pair y z)
-      str = I.Sym . VStr
-      int = I.Sym . VInt
-      rule hd bd = I.Pair
-        (str hd)
-        (I.list $ map str bd)
-      left = triple
-        (rule "NP" ["DET", "N"])
-        (int 1)
-        (int 2)
-      right = triple
-        (rule "DET" [])
-        (int 2)
-        (int 3)
-  print . evalMatch $ do
-    match leftP left
-    match rightP right
-
-
--- -- | Evaluate pattern matching.
--- evalMatch' :: MatchM T.Text T.Text -> Maybe (Env T.Text T.Text)
--- evalMatch' m =
---   let (val, env) = RWS.runState (runMaybeT m) M.empty
---    in case val of
---         Nothing -> Nothing
---         Just _  -> Just env
+-- leftP :: Pattern sym T.Text
+-- leftP = Pair
+--   (Pair (Var "A") (Pair (Var "B") (Var "beta")))
+--   (Pair (Var "i") (Var "j"))
+--
+--
+-- rightP :: Pattern sym T.Text
+-- rightP = Pair
+--   (Pair (Var "B") (Const I.Unit))
+--   (Pair (Var "j") (Var "k"))
+--
+--
+-- -- | Primitive value
+-- data Val
+--   -- | > Integer
+--   = VInt Int
+--   -- | > String
+--   | VStr T.Text
+--   deriving (Show, Eq, Ord)
+--
+--
+-- main :: IO ()
+-- main = do
+--   let triple x y z = I.Pair x (I.Pair y z)
+--       str = I.Sym . VStr
+--       int = I.Sym . VInt
+--       rule hd bd = I.Pair
+--         (str hd)
+--         (I.list $ map str bd)
+--       left = triple
+--         (rule "NP" ["DET", "N"])
+--         (int 1)
+--         (int 2)
+--       right = triple
+--         (rule "DET" [])
+--         (int 2)
+--         (int 3)
+--   print . evalMatch $ do
+--     match leftP left
+--     match rightP right

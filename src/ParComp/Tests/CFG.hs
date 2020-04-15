@@ -130,7 +130,7 @@ complete :: P.Rule T.Text T.Text
 complete =
   P.Rule [leftP, rightP] downP P.CTrue
   where
-    leftP = Pair
+    leftP = item
       (rule (Var "A")
         ( Via (split dot)
             (Pair (Var "alpha") (Pair dot (Pair (Var "B") (Var "beta"))))
@@ -141,12 +141,12 @@ complete =
 --         )
       )
       (span "i" "j")
-    rightP = Pair
+    rightP = item
       (rule (Var "B")
         (suffix $ Pair dot nil)
       )
       (span "j" "k")
-    downP = Pair
+    downP = item
       (rule (Var "A")
         ( App append $ Pair
             (Var "alpha")
@@ -155,12 +155,44 @@ complete =
       )
       (span "i" "k")
     -- Some helper functions, to make the code more readable
+    item r s = Union . Left $ Pair r s
     rule x y = Pair x y
     cons x y = Pair x y
     span i j = (Pair (Var i) (Var j))
     -- The dot is represented just as nil (empty list)
     dot = unit
     nil = unit
+    unit = Const I.Unit
+
+
+-- | CFG predict rule
+predict :: P.Rule T.Text T.Text
+predict =
+  P.Rule [leftP, rightP] downP P.CTrue
+  where
+    leftP = item
+      (rule Any
+        ( Via (split dot)
+            (Pair Any (Pair dot (Pair (Var "B") Any)))
+        )
+--         (AndP
+--           (suffix $ Pair dot (Pair (Var "B") (Var "beta")))
+--           (Let (Var "alpha") (removeSuffix dot) unit)
+--         )
+      )
+      (span "i" "j")
+    rightP = Union . Right $ rule (Var "B") (Var "beta")
+    downP = item
+      -- (rule (Var "B") (Pair dot (Var "beta")))
+      (rule (Var "B") (Var "beta"))
+      (span "j" "j")
+    -- Some helper functions, to make the code more readable
+    item r s = Union . Left $ Pair r s
+    rule x y = Pair x y
+    cons x y = Pair x y
+    span i j = (Pair (Var i) (Var j))
+    -- The dot is represented just as nil (empty list)
+    dot = unit
     unit = Const I.Unit
 
 
@@ -172,20 +204,27 @@ cfgBaseItems
     -- ^ CFG rules
   -> S.Set (I.Item T.Text)
 cfgBaseItems inp cfgRules =
-  S.fromList $ base1 ++ base2
+  S.fromList $ base1 ++ base2 ++ baseRules
   where
     n = length inp
     base1 = do
-      i <- [0..n-1]
+      -- Note that we use prediction
+      -- i <- [0..n-1]
+      i <- [0]
       (ruleHead, ruleBody) <- S.toList cfgRules
       let rule = mkRule ruleHead ruleBody
           span = mkSpan i i
-      return $ I.Pair rule span
+      return $ mkItem rule span
     base2 = do
       (i, term) <- zip [0..n-1] inp
       let rule = mkRule term []
           span = mkSpan i (i + 1)
-      return $ I.Pair rule span
+      return $ mkItem rule span
+    baseRules = do
+      (ruleHead, ruleBody) <- S.toList cfgRules
+      let rule = mkRule ruleHead ruleBody
+      return . I.Union $ Right rule
+    mkItem rl sp = I.Union . Left $ I.Pair rl sp
     mkRule hd bd = I.Pair (I.Sym hd) (I.list $ dot : map I.Sym bd)
     mkSpan i j = I.Pair (pos i) (pos j)
     pos = I.Sym . T.pack . show
@@ -217,12 +256,15 @@ testCFG = do
         ]
       sent = ["a", "dog", "quickly", "eats", "some", "pizza"]
       baseItems = cfgBaseItems sent cfgRules
-      ruleMap = M.fromList [("CO", complete)]
+      ruleMap = M.fromList
+        [ ("CO", complete)
+        , ("PR", predict)
+        ]
       pos = I.Sym . T.pack . show
       zero = pos 0
       slen = pos (length sent)
       isFinal = \case
-        I.Pair _ (I.Pair i j)
+        I.Union (Left (I.Pair _ (I.Pair i j)))
           | i == zero && j == slen -> True
         _ -> False
   -- forM_ (S.toList baseItems) print

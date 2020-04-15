@@ -157,17 +157,14 @@ chartParse baseItems ruleMap isFinal =
 --             ST.liftIO $ do
 --               T.putStr "# Matching: "
 --               print items'
-            let mayItem = P.apply rule items'
-            case mayItem of
-              Nothing -> return ()
-              Just result -> do
-                -- We managed to apply a rule!
---                 ST.liftIO $ do
---                   T.putStr "# "
---                   T.putStr ruleName
---                   T.putStr ": "
---                   putStr $ show items'
---                   T.putStr " => "
---                   print result
-                -- Add result to agenda
-                addToAgenda result
+            P.runMatch $ do
+              result <- P.apply rule items'
+              ST.lift . ST.lift $ addToAgenda result
+              -- We managed to apply a rule!
+--               ST.liftIO $ do
+--                 T.putStr "# "
+--                 T.putStr ruleName
+--                 T.putStr ": "
+--                 putStr $ show items'
+--                 T.putStr " => "
+--                 print result
