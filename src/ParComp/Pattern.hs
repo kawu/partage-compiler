@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE LambdaCase #-}
 
 
 -- | Pattern matching for items and deduction rules
@@ -76,10 +77,18 @@ data Pattern sym var
   | Var var
   -- | > Any: match any item expression (wildcard)
   | Any
-  -- | > App: apply function to the given argument pattern.  The pattern should
-  -- contain no free variables, nor wildcards (i.e., it should be possible to
-  -- `close` them)
+  -- | > Application: apply function to the given argument pattern.  The
+  -- pattern should contain no free variables, wildcards, nor logical patterns
+  -- (`OrP`, `AndP`), i.e., it should be possible to `close` it
   | App FunName (Pattern sym var)
+  -- | > Disjunction: try to match the first pattern and, if this fails, move
+  -- on to match the second pattern; in particular, the second patter is matched
+  -- only if the first pattern matching fails
+  | OrP (Pattern sym var) (Pattern sym var)
+  -- | > Conjunction: match both patterns against the same item (provided for
+  -- symmetry with `OrP`, not clear if this is useful, and may be removed in
+  -- the future)
+  | AndP (Pattern sym var) (Pattern sym var)
   deriving (Show, Eq, Ord)
 
 
@@ -177,13 +186,24 @@ match pt it =
       f <- retrieveFun fname
       it' <- f <$> close p
       guard $ it' == it
+    (OrP p1 p2, it) -> do
+      env <- RWS.get
+      RWS.lift (runMaybeT $ match p1 it) >>= \case
+        Just _ -> return ()
+        Nothing -> do
+          RWS.put env
+          match p2 it
+    (AndP p1 p2, it) -> do
+      match p1 it
+      match p2 it
     _ ->
       -- Fail otherwise
       empty
 
 
--- | Convert the pattern (with no free variables nor wildcards) to the
--- corresponding item expression.
+-- | Convert the pattern to the corresponding item expression.  The pattern
+-- should not have any free variables, wildcard patterns, or logical
+-- (disjunction/conjunction) patterns.
 close :: (Ord var) => Pattern sym var -> MatchM sym var (Item sym)
 close p =
   case p of
@@ -193,13 +213,16 @@ close p =
       case up of
         Left lp  -> I.Union .  Left <$> close lp
         Right rp -> I.Union . Right <$> close rp
-    -- this fails if variable x is not bound
+    -- Fail if variable x not bound
     Var x -> retrieve x
-    -- fail in case of a wildcard (`Any`) pattern
+    -- Fail in case of a wildcard (`Any`) pattern
     Any -> empty
     App fname p -> do
       f <- retrieveFun fname
       f <$> close p
+    -- Fail in case of logical patterns
+    OrP p1 p2 -> empty
+    AndP p1 p2 -> empty
 
 
 --------------------------------------------------

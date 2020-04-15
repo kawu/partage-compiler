@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE LambdaCase #-}
 
 
 -- | Simple, non-efficient parsing with deduction rules
@@ -7,8 +8,6 @@
 
 module ParComp.Parser
   ( chartParse
-  , testCFG
-  , pickOne
   ) where
 
 
@@ -108,12 +107,14 @@ chartParse
   :: (Show sym, Ord sym, Ord var)
   => P.Grammar sym
     -- ^ The underlying grammar
-  -> M.Map T.Text (P.Rule sym var)
-    -- ^ Deduction rules (named)
   -> S.Set (I.Item sym)
     -- ^ Axiom-generated items
-  -> IO ()
-chartParse gram ruleMap baseItems =
+  -> M.Map T.Text (P.Rule sym var)
+    -- ^ Deduction rules (named)
+  -> (I.Item sym -> Bool)
+    -- ^ Is the item final?
+  -> IO (Maybe (I.Item sym))
+chartParse gram baseItems ruleMap isFinal =
 
   flip ST.evalStateT emptyState $ do 
     mapM_ addToAgenda (S.toList baseItems)
@@ -121,14 +122,18 @@ chartParse gram ruleMap baseItems =
 
   where
 
-    -- Process agenda until empty
+    -- Process agenda until empty, or until final item found
     processAgenda = do
-      mayItem <- popFromAgenda 
-      case mayItem of
-        Nothing -> return ()
-        Just item -> do
-          handleItem item
-          processAgenda
+      popFromAgenda >>= \case
+        Nothing -> return Nothing
+        Just item -> if isFinal item
+          then do
+            addToChart item
+            return $ Just item
+          else do
+            handleItem item
+            addToChart item
+            processAgenda
 
     -- Try to match the given item with other items already in the chart
     handleItem item = do
@@ -157,77 +162,11 @@ chartParse gram ruleMap baseItems =
               Nothing -> return ()
               Just result -> do
                 -- We managed to apply a rule!
-                ST.liftIO $ do
-                  T.putStr ruleName
-                  T.putStr ": "
-                  putStr $ show items'
-                  T.putStr " => "
-                  print result
+--                 ST.liftIO $ do
+--                   T.putStr ruleName
+--                   T.putStr ": "
+--                   putStr $ show items'
+--                   T.putStr " => "
+--                   print result
                 -- Add result to agenda
                 addToAgenda result
-      addToChart item
-
-
---------------------------------------------------
--- TESTING
---------------------------------------------------
-
-
-complete :: P.Rule T.Text T.Text
-complete =
-  P.Rule [leftP, rightP] consP P.CTrue
-  where
-    leftP = Pair
-      (Pair (Var "A") (Pair (Var "B") (Var "beta")))
-      (Pair (Var "i") (Var "j"))
-    rightP = Pair
-      (Pair (Var "B") (Const I.Unit))
-      (Pair (Var "j") (Var "k"))
-    consP = Pair
-      (Pair (Var "A") (Var "beta"))
-      (Pair (Var "i") (Var "k"))
-
-
--- cfgGram :: P.Grammar T.Text
--- cfgGram = P.emptyGram
-
-
--- | Compute the base items for the given sentence and grammar
-cfgBaseItems 
-  :: [T.Text]
-    -- ^ Input sentence
-  -> S.Set (T.Text, [T.Text])
-    -- ^ CFG rules
-  -> S.Set (I.Item T.Text)
-cfgBaseItems inp cfgRules =
-  S.fromList $ base1 ++ base2
-  where
-    n = length inp
-    base1 = do
-      i <- [1..n]
-      (ruleHead, ruleBody) <- S.toList cfgRules
-      let dottedRule = I.Pair (I.Sym ruleHead) (I.list $ map I.Sym ruleBody)
-      return $ I.Pair
-        dottedRule
-        (I.Pair (pos i) (pos i))
-    base2 = do
-      (i, term) <- zip [1..n] inp
-      let dottedRule = I.Pair (I.Sym term) (I.list [])
-      return $ I.Pair
-        dottedRule
-        (I.Pair (pos i) (pos (i + 1)))
-    pos = I.Sym . T.pack . show
-
-
-testCFG :: IO ()
-testCFG = do
-  let cfgGram = S.fromList
-        [ ("NP", ["DET", "N"])
-        , ("DET", ["a"])
-        , ("N", ["dog"])
-        ]
-      sent = ["a", "dog"]
-      baseItems = cfgBaseItems sent cfgGram
-      ruleMap = M.fromList [("CO", complete)]
-  forM_ (S.toList baseItems) print
-  chartParse P.emptyGram ruleMap baseItems
