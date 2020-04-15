@@ -16,27 +16,152 @@ module ParComp.Tests.CFG
 import qualified Data.Text as T
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
+import           Data.Maybe (fromJust)
 
 import qualified ParComp.Item as I
 import qualified ParComp.Pattern as P
 import           ParComp.Pattern (Pattern(..))
 import           ParComp.Parser (chartParse)
 
+import           Debug.Trace (trace)
 
--- | CFG complete rule
+
+-- -- | CFG complete rule
+-- complete :: P.Rule T.Text T.Text
+-- complete =
+--   P.Rule [leftP, rightP] consP P.CTrue
+--   where
+--     leftP = Pair
+--       (Pair (Var "A") (Pair (Var "B") (Var "beta")))
+--       (Pair (Var "i") (Var "j"))
+--     rightP = Pair
+--       (Pair (Var "B") (Const I.Unit))
+--       (Pair (Var "j") (Var "k"))
+--     consP = Pair
+--       (Pair (Var "A") (Var "beta"))
+--       (Pair (Var "i") (Var "k"))
+
+
+-- Append two (item) lists
+append :: I.Item sym -> I.Item sym
+append (I.Pair xs ys) =
+  go xs
+  where
+    go xs =
+      case xs of
+        I.Unit -> ys
+        I.Pair x xs' -> I.Pair x (go xs')
+        _ -> error "appendI: argument xs not a list"
+append _ = error "appendI: argument not a pair of lists"
+
+
+-- | Local pattern type synonym
+type Patt = Pattern T.Text T.Text
+
+
+-- | Match suffix.
+suffix :: Patt -> Patt
+suffix p = OrP p (Pair Any $ suffix p)
+
+
+-- | Remove suffix starting from the first element which satisfies the given
+-- pattern.
+removeSuffix :: Patt -> Patt
+removeSuffix p =
+  OrP p1 (OrP p2 p3)
+  where
+    p1 = Let Any (Pair p Any) nil
+    p2 = Pair Any (removeSuffix p)
+    p3 = nil
+    nil = Const I.Unit
+
+
+-- | Split a list xs into two parts (ys, zs) w.r.t pattern p so that:
+--
+-- * ys = removeSuffix p xs
+-- * zs = suffix p xs
+--
+split :: Patt -> Patt
+split p =
+  OrP p1 (OrP p2 p3)
+  where
+    p1 = Let
+      (Var "suff")
+      (cons p Any)
+      (pair nil (Var "suff"))
+    p2 = Let
+      (pair (Var "x") (pair (Var "pref") (Var "suff")))
+      (cons Any (split p))
+      (pair (cons (Var "x") (Var "pref")) (Var "suff"))
+    p3 = pair nil nil
+    -- Helper functions
+    nil = Const I.Unit
+    cons = Pair
+    pair = Pair
+
+
+-- -- | A version of `split` which works by manually renaming variables.
+-- -- This should not be necessar, though!
+-- split' :: Patt -> Patt
+-- split' p =
+--   go 0
+--   where
+--     go k = 
+--       OrP p1 (OrP p2 p3)
+--       where
+--         p1 = Let
+--           (var "suffix")
+--           (cons p Any)
+--           (pair nil (var "suffix"))
+--         p2 = Let
+--           (pair (var "x") (pair (var "pref") (var "suff")))
+--           (cons Any (go (k + 1)))
+--           (pair (cons (var "x") (var "pref")) (var "suff"))
+--         p3 = pair nil nil
+--         -- Helper functions
+--         nil = Const I.Unit
+--         cons = Pair
+--         pair = Pair
+--         var str = Var $ str `T.append` T.pack (show k)
+
+
+-- | CFG complete rule with dots
 complete :: P.Rule T.Text T.Text
 complete =
-  P.Rule [leftP, rightP] consP P.CTrue
+  P.Rule [leftP, rightP] downP P.CTrue
   where
     leftP = Pair
-      (Pair (Var "A") (Pair (Var "B") (Var "beta")))
-      (Pair (Var "i") (Var "j"))
+      (rule (Var "A")
+        ( Via (split dot)
+            (Pair (Var "alpha") (Pair dot (Pair (Var "B") (Var "beta"))))
+        )
+--         (AndP
+--           (suffix $ Pair dot (Pair (Var "B") (Var "beta")))
+--           (Let (Var "alpha") (removeSuffix dot) unit)
+--         )
+      )
+      (span "i" "j")
     rightP = Pair
-      (Pair (Var "B") (Const I.Unit))
-      (Pair (Var "j") (Var "k"))
-    consP = Pair
-      (Pair (Var "A") (Var "beta"))
-      (Pair (Var "i") (Var "k"))
+      (rule (Var "B")
+        (suffix $ Pair dot nil)
+      )
+      (span "j" "k")
+    downP = Pair
+      (rule (Var "A")
+        ( App append $ Pair
+            (Var "alpha")
+            (Pair (Var "B") (Pair dot (Var "beta")))
+        )
+      )
+      (span "i" "k")
+    -- Some helper functions, to make the code more readable
+    rule x y = Pair x y
+    cons x y = Pair x y
+    span i j = (Pair (Var i) (Var j))
+    -- The dot is represented just as nil (empty list)
+    dot = unit
+    nil = unit
+    unit = Const I.Unit
 
 
 -- | Compute the base items for the given sentence and grammar
@@ -61,25 +186,37 @@ cfgBaseItems inp cfgRules =
       let rule = mkRule term []
           span = mkSpan i (i + 1)
       return $ I.Pair rule span
-    mkRule hd bd = I.Pair (I.Sym hd) (I.list $ map I.Sym bd)
+    mkRule hd bd = I.Pair (I.Sym hd) (I.list $ dot : map I.Sym bd)
     mkSpan i j = I.Pair (pos i) (pos j)
     pos = I.Sym . T.pack . show
+    -- The dot is represented just as nil (empty list)
+    dot = I.Unit
+
+
+-- -- | CFG grammar functions
+-- cfgFuns :: P.Grammar T.Text
+-- cfgFuns = P.emptyGram
+--   { P.funMap = M.singleton (P.FunName "append") appendI
+--   }
 
 
 testCFG :: IO ()
 testCFG = do
-  let cfgGram = S.fromList
+  let cfgRules = S.fromList
         [ ("NP", ["DET", "N"])
         , ("S", ["NP", "VP"])
         , ("VP", ["V"])
-        , ("VP", ["V", "Adv"])
+        , ("VP", ["Adv", "V", "NP"])
         , ("DET", ["a"])
+        , ("DET", ["some"])
         , ("N", ["dog"])
+        , ("N", ["pizza"])
+        , ("V", ["eats"])
         , ("V", ["runs"])
         , ("Adv", ["quickly"])
         ]
-      sent = ["a", "dog", "runs", "quickly"]
-      baseItems = cfgBaseItems sent cfgGram
+      sent = ["a", "dog", "quickly", "eats", "some", "pizza"]
+      baseItems = cfgBaseItems sent cfgRules
       ruleMap = M.fromList [("CO", complete)]
       pos = I.Sym . T.pack . show
       zero = pos 0
@@ -89,6 +226,6 @@ testCFG = do
           | i == zero && j == slen -> True
         _ -> False
   -- forM_ (S.toList baseItems) print
-  chartParse P.emptyGram baseItems ruleMap isFinal >>= \case
+  chartParse baseItems ruleMap isFinal >>= \case
     Nothing -> putStrLn "# No parse found"
     Just it -> print it 

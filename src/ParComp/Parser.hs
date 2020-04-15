@@ -104,17 +104,17 @@ inject x (x' : xs) =
 
 -- | Perform chart parsing with the given grammar and deduction rules.
 chartParse
-  :: (Show sym, Ord sym, Ord var)
-  => P.Grammar sym
-    -- ^ The underlying grammar
-  -> S.Set (I.Item sym)
+  :: (Show sym, Show var, Ord sym, Ord var)
+--   => P.Grammar sym
+--     -- ^ The underlying grammar
+  => S.Set (I.Item sym)
     -- ^ Axiom-generated items
   -> M.Map T.Text (P.Rule sym var)
     -- ^ Deduction rules (named)
   -> (I.Item sym -> Bool)
     -- ^ Is the item final?
   -> IO (Maybe (I.Item sym))
-chartParse gram baseItems ruleMap isFinal =
+chartParse baseItems ruleMap isFinal =
 
   flip ST.evalStateT emptyState $ do 
     mapM_ addToAgenda (S.toList baseItems)
@@ -157,12 +157,13 @@ chartParse gram baseItems ruleMap isFinal =
 --             ST.liftIO $ do
 --               T.putStr "# Matching: "
 --               print items'
-            let mayItem = P.apply gram rule items'
+            let mayItem = P.apply rule items'
             case mayItem of
               Nothing -> return ()
               Just result -> do
                 -- We managed to apply a rule!
 --                 ST.liftIO $ do
+--                   T.putStr "# "
 --                   T.putStr ruleName
 --                   T.putStr ": "
 --                   putStr $ show items'
