@@ -1,3 +1,4 @@
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
@@ -7,22 +8,31 @@
 
 
 module ParComp.Pattern
-  ( Pattern (..)
+  (
+  -- * Registered functions
+    FunSet (..)
+  , FunName (..)
+  , emptyFunSet
+
+  -- * Patterns and rules
+  , Pattern (..)
   , Cond (..)
   , Rule (..)
   , apply
-  , runMatch
+  , runMatchT
   ) where
 
 
 -- import           Prelude hiding (Integer, either)
-import           Control.Monad (guard)
+import           Control.Monad (guard, void)
 import           Control.Applicative (empty, (<|>))
 import           Control.Monad.Trans.Maybe (MaybeT(..))
 import qualified Control.Monad.State.Strict as S
 import qualified Control.Monad.RWS.Strict as RWS
 
 import qualified Pipes as P
+
+import           Data.Lens.Light
 
 import qualified Data.Text as T
 import qualified Data.Set as Set
@@ -39,28 +49,32 @@ import           Debug.Trace (trace)
 --------------------------------------------------
 
 
--- -- | Function name
--- newtype FunName = FunName {unFunName :: T.Text}
---   deriving (Show, Eq, Ord)
+-- | Function name
+newtype FunName = FunName {unFunName :: T.Text}
+  deriving (Show, Eq, Ord)
 
 
--- -- | Predicate name
--- newtype PredName = PredName {unPredName :: T.Text}
---   deriving (Show, Eq, Ord)
+-- | Predicate name
+newtype PredName = PredName {unPredName :: T.Text}
+  deriving (Show, Eq, Ord)
 
 
--- -- | The underlying grammar
--- data Grammar sym = Grammar
---   { predMap :: M.Map PredName (Item sym -> Bool)
---     -- ^ Named multi-argument predicate functions.
---   , funMap :: M.Map FunName (Item sym -> Item sym)
---     -- ^ Named multi-argument item expression functions
---   }
+-- | Registered grammar functions
+--
+-- Note that the registered functions are can be in fact multi-argument, since
+-- `Item` allows to encode tuples.
+--
+data FunSet sym = FunSet
+  { predMap :: M.Map PredName (Item sym -> Bool)
+    -- ^ Named predicate functions.
+  , funMap :: M.Map FunName (Item sym -> Item sym)
+    -- ^ Named item expression functions
+  }
 
 
--- -- | Empty grammar
--- emptyGram :: Grammar sym
--- emptyGram = Grammar M.empty M.empty
+-- | Empty grammar
+emptyFunSet :: FunSet sym
+emptyFunSet = FunSet M.empty M.empty
 
 
 --------------------------------------------------
@@ -80,12 +94,11 @@ data Pattern sym var
   | Var var
   -- | > Any: match any item expression (wildcard)
   | Any
-  -- | > Application: apply function to the given argument pattern.  The
-  -- pattern must be possible to `close`
-  | App (Item sym -> Item sym) (Pattern sym var)
-  -- | > Disjunction: try to match the first pattern and, if this fails, move
-  -- on to match the second pattern; in particular, the second patter is matched
-  -- only if the first pattern matching fails
+  -- | > Application: apply function to the given argument pattern.
+  -- The pattern must be possible to `close`.
+  | App FunName (Pattern sym var)
+  -- | > Disjunction: match items which match either of the two patterns.
+  -- `OrP` provides non-determinism in pattern matching.
   | OrP (Pattern sym var) (Pattern sym var)
   -- | > Conjunction: match both patterns against the same item (provided for
   -- symmetry with `OrP`)
@@ -102,14 +115,30 @@ data Pattern sym var
   -- `Via` is different from `Let` in that variables in `x` are global (i.e.,
   -- with the scope of the rule).
   | Via (Pattern sym var) (Pattern sym var)
+  -- | > Fix: `Fix p` defines a recursive pattern `p`, which can be referred to
+  -- with `Rec` from within `p`
+  | Fix (Pattern sym var)
+  -- | > Rec: call recursive pattern `p` defined with `Fix p`
+  | Rec
+  deriving (Show, Eq, Ord)
 
 
 -- | Variable binding environment
 type Env sym var = M.Map var (Item sym)
 
 
+-- | Pattern matching state
+data PMState sym var = PMState
+  { _env :: Env sym var
+    -- ^ Variable binding environment
+  , _fix :: Maybe (Pattern sym var)
+    -- ^ Fixed recursive pattern
+  } deriving (Show)
+$( makeLenses [''PMState] )
+
+
 -- | Pattern matching monad
-type MatchT m sym var a = P.ListT (S.StateT (Env sym var) m) a
+type MatchT m sym var a = P.ListT (RWS.RWST (FunSet sym) () (PMState sym var) m) a
 -- type MatchM sym var a = MaybeT (RWS.RWS (Grammar sym) () (Env sym var)) a
 
 
@@ -123,47 +152,94 @@ type MatchT m sym var a = P.ListT (S.StateT (Env sym var) m) a
 
 
 -- | Evaluate pattern matching.
-runMatch :: (Monad m) => MatchT m sym var a -> m ()
-runMatch = flip S.evalStateT M.empty . P.runListT
+runMatchT :: (Monad m) => FunSet sym -> MatchT m sym var a -> m ()
+-- runMatchT = flip S.evalStateT M.empty . P.runListT
+runMatchT funSet m =
+  void $ RWS.evalRWST (P.runListT m) funSet (PMState M.empty Nothing)
 
 
 -- | Retrieve the item expression bound to the given variable.
 retrieve :: (Monad m, Ord var) => var -> MatchT m sym var (Item sym)
 retrieve v = do
-  mayIt <- S.gets (M.lookup v)
+  mayIt <- S.gets (M.lookup v . getL env)
   case mayIt of
     Nothing -> empty
     Just it -> return it
 
 
--- -- | Retrieve the predicate with the given name.  The function with the name
--- -- must exist, otherwise `retrievePred` thorws an error (alternatively, the
--- -- pattern match could simplify fail, but that could lead to hard to find
--- -- errors in deduction rules).
--- retrievePred :: PredName -> MatchM sym var (Item sym -> Bool)
--- retrievePred predName = do
---   mayFun <- RWS.asks (M.lookup predName . predMap)
---   case mayFun of
---     Nothing -> error $ concat
---       [ "retrievePred: function with name '"
---       , T.unpack $ unPredName predName
---       , "' does not exist"
---       ]
---     Just fun -> return fun
+-- | Bind the item to the given variable.  If the variable is already bound,
+-- make sure that the new item is equal to the old one.
+bind :: (Monad m, Eq sym, Ord var) => var -> Item sym -> MatchT m sym var ()
+bind v it = do
+  mayIt <- S.lift $ S.gets (M.lookup v . getL env)
+  case mayIt of
+    Nothing -> S.modify' . modL env $ M.insert v it
+    Just it' -> guard $ it == it'
 
 
--- -- | Retrieve the symbol-level function with the given name.  The function with
--- -- the name must exist, otherwise `retrieveFun` thorws an error.
--- retrieveFun :: FunName -> MatchM sym var (Item sym -> Item sym)
--- retrieveFun funName = do
---   mayFun <- RWS.asks (M.lookup funName . funMap)
---   case mayFun of
---     Nothing -> error $ concat
---       [ "retrieveFun: function with name '"
---       , T.unpack $ unFunName funName
---       , "' does not exist"
---       ]
---     Just fun -> return fun
+-- | Perform matching in a local environment.
+withLocalEnv :: (Monad m) => MatchT m sym var a -> MatchT m sym var a
+withLocalEnv m = do
+  env <- S.get
+  x <- m
+  S.put env
+  return x
+
+
+-- | Perform match with the recursive pattern.
+withFix
+  :: (Monad m)
+  => Pattern sym var
+  -> MatchT m sym var a
+  -> MatchT m sym var a
+withFix p m = do
+  -- Retrieve the old fix
+  oldFix <- S.lift . S.gets $ getL fix
+  -- Register the new fix
+  S.lift . S.modify' $ setL fix (Just p)
+  x <- m
+  -- Restore the old fix
+  S.lift . S.modify' $ setL fix oldFix
+  return x
+
+
+-- | Retrieve the fixed recursive pattern.
+fixed :: (Monad m) => MatchT m sym var (Pattern sym var)
+fixed = do
+  mayFix <- S.lift . S.gets $ getL fix
+  case mayFix of
+    Nothing -> empty
+    Just p  -> return p
+
+
+-- | Retrieve the predicate with the given name.  The function with the name
+-- must exist, otherwise `retrievePred` thorws an error (alternatively, the
+-- pattern match could simplify fail, but that could lead to hard to find
+-- errors in deduction rules).
+retrievePred :: (Monad m) => PredName -> MatchT m sym var (Item sym -> Bool)
+retrievePred predName = do
+  mayFun <- RWS.asks (M.lookup predName . predMap)
+  case mayFun of
+    Nothing -> error $ concat
+      [ "retrievePred: function with name '"
+      , T.unpack $ unPredName predName
+      , "' does not exist"
+      ]
+    Just fun -> return fun
+
+
+-- | Retrieve the symbol-level function with the given name.  The function with
+-- the name must exist, otherwise `retrieveFun` thorws an error.
+retrieveFun :: (Monad m) => FunName -> MatchT m sym var (Item sym -> Item sym)
+retrieveFun funName = do
+  mayFun <- RWS.asks (M.lookup funName . funMap)
+  case mayFun of
+    Nothing -> error $ concat
+      [ "retrieveFun: function with name '"
+      , T.unpack $ unFunName funName
+      , "' does not exist"
+      ]
+    Just fun -> return fun
 
 
 -- -- | Retrieve the set of local variables in the given pattern.
@@ -179,25 +255,6 @@ retrieve v = do
 --     Var v -> Set.singleton v
 --     Any -> Set.empty
 --     _ -> error "localVarsIn: unhandled pattern"
-
-
--- | Bind the item to the given variable.  If the variable is already bound,
--- make sure that the new item is equal to the old one.
-bind :: (Monad m, Eq sym, Ord var) => var -> Item sym -> MatchT m sym var ()
-bind v it = do
-  mayIt <- S.lift $ S.gets (M.lookup v)
-  case mayIt of
-    Nothing -> S.modify' $ M.insert v it
-    Just it' -> guard $ it == it'
-
-
--- | Perform matching in a local environment.
-withLocalEnv :: (Monad m) => MatchT m sym var a -> MatchT m sym var a
-withLocalEnv m = do
-  env <- S.get
-  x <- m
-  S.put env
-  return x
 
 
 -- | Match the given pattern with the given item expression and bind item
@@ -229,8 +286,8 @@ match pt it =
       return it
     (Any, _) ->
       return it
-    (App f p, it) -> do
-      -- f <- retrieveFun fname
+    (App fname p, it) -> do
+      f <- retrieveFun fname
       it' <- f <$> close p
       guard $ it' == it
       return it
@@ -258,6 +315,12 @@ match pt it =
     (Via p x, it) -> do
       it' <- match p it
       match x it'
+    (Fix p, it) -> do
+      withFix p $ do
+        match p it
+    (Rec, it) -> do
+      p <- fixed
+      match p it
     _ ->
       -- Fail otherwise
       empty
@@ -284,14 +347,16 @@ close p =
     Var x -> retrieve x
     -- Fail in case of a wildcard (`Any`) pattern
     Any -> empty
-    App f p -> do
-      -- f <- retrieveFun fname
+    App fname p -> do
+      f <- retrieveFun fname
       f <$> close p
     -- Fail in case of logical patterns (TODO: ???)
     OrP p1 p2 -> error "close OrP"
     AndP p1 p2 -> error "close AndP"
     Let x e y -> error "close Let"
     Via p x -> error "close Via"
+    Fix _ -> error "close Fix"
+    Rec -> error "close Rec"
 --     Let x e y -> do
 --       match x =<< close e
 --       close y
@@ -314,7 +379,7 @@ data Cond sym var
   = Eq (Pattern sym var) (Pattern sym var)
   -- | > Check if the given predicate is satisfied
   -- | Pred PredName (Pattern sym var)
-  | Pred (Item sym -> Bool) (Pattern sym var)
+  | Pred PredName (Pattern sym var)
   -- | > Logical conjunction
   | And (Cond sym var) (Cond sym var)
   -- | > Logical disjunction
@@ -323,7 +388,7 @@ data Cond sym var
   | Neg (Cond sym var)
   -- | > Always True
   | CTrue
-  -- deriving (Show, Eq, Ord)
+  deriving (Show, Eq, Ord)
 
 
 -- | Side condition checking monad
@@ -341,8 +406,7 @@ check :: (Monad m, Eq sym, Ord var) => Cond sym var -> MatchT m sym var Bool
 check cond =
   case cond of
     Eq px py  -> (==) <$> close px <*> close py
-    -- Pred pname p -> retrievePred pname <*> close p
-    Pred pred p -> pred <$> close p
+    Pred pname p -> retrievePred pname <*> close p
     And cx cy -> (&&) <$> check cx <*> check cy
     Or cx cy  -> (||) <$> check cx <*> check cy
     Neg c -> not <$> check c
@@ -362,7 +426,7 @@ data Rule sym var = Rule
     -- ^ The rule's consequent
   , condition :: Cond sym var
   }
-  -- deriving (Show, Eq, Ord)
+  deriving (Show, Eq, Ord)
 
 
 -- | Apply the deduction rule to the given items.  If the application succeeds,

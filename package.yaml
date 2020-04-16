@@ -26,6 +26,7 @@ dependencies:
 - containers >= 0.6 && < 0.7
 - text >= 1.2 && < 1.3
 - pipes >= 4.3 && < 4.4
+- data-lens-light >= 0.1 && < 0.2
 
 library:
   source-dirs: src

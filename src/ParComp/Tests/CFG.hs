@@ -11,6 +11,8 @@ module ParComp.Tests.CFG
   ) where
 
 
+import           Prelude hiding (splitAt)
+
 -- import           Control.Monad (forM_)
 -- 
 import qualified Data.Text as T
@@ -51,8 +53,8 @@ append (I.Pair xs ys) =
       case xs of
         I.Unit -> ys
         I.Pair x xs' -> I.Pair x (go xs')
-        _ -> error "appendI: argument xs not a list"
-append _ = error "appendI: argument not a pair of lists"
+        _ -> error "append: argument xs not a list"
+append _ = error "append: argument not a pair of lists"
 
 
 -- | Local pattern type synonym
@@ -81,9 +83,9 @@ removeSuffix p =
 -- * ys = removeSuffix p xs
 -- * zs = suffix p xs
 --
-split :: Patt -> Patt
-split p =
-  OrP p1 (OrP p2 p3)
+splitAt :: Patt -> Patt
+splitAt p =
+  Fix $ OrP p1 (OrP p2 p3)
   where
     p1 = Let
       (Var "suff")
@@ -91,7 +93,12 @@ split p =
       (pair nil (Var "suff"))
     p2 = Let
       (pair (Var "x") (pair (Var "pref") (Var "suff")))
-      (cons Any (split p))
+      -- NOTE: we could simply write:
+      --   `(cons Any (splitAt p))`
+      -- However, we don't want recursion in our patterns, since this would
+      -- prevent us from comparing them and storing them in dictionaries.
+      -- Explicit recursion with `Fix` and `Rec` solves this problem.
+      (cons Any Rec)
       (pair (cons (Var "x") (Var "pref")) (Var "suff"))
     p3 = pair nil nil
     -- Helper functions
@@ -100,10 +107,10 @@ split p =
     pair = Pair
 
 
--- -- | A version of `split` which works by manually renaming variables.
+-- -- | A version of `splitAt` which works by manually renaming variables.
 -- -- This should not be necessar, though!
--- split' :: Patt -> Patt
--- split' p =
+-- splitAt' :: Patt -> Patt
+-- splitAt' p =
 --   go 0
 --   where
 --     go k = 
@@ -132,7 +139,7 @@ complete =
   where
     leftP = item
       (rule (Var "A")
-        ( Via (split dot)
+        ( Via (splitAt dot)
             (Pair (Var "alpha") (Pair dot (Pair (Var "B") (Var "beta"))))
         )
 --         (AndP
@@ -148,7 +155,7 @@ complete =
       (span "j" "k")
     downP = item
       (rule (Var "A")
-        ( App append $ Pair
+        ( App (P.FunName "append") $ Pair
             (Var "alpha")
             (Pair (Var "B") (Pair dot (Var "beta")))
         )
@@ -172,7 +179,7 @@ predict =
   where
     leftP = item
       (rule Any
-        ( Via (split dot)
+        ( Via (splitAt dot)
             (Pair Any (Pair dot (Pair (Var "B") Any)))
         )
 --         (AndP
@@ -181,10 +188,9 @@ predict =
 --         )
       )
       (span "i" "j")
-    rightP = Union . Right $ rule (Var "B") (Var "beta")
+    rightP = Union . Right $ Via (rule (Var "B") Any) (Var "rule")
     downP = item
-      -- (rule (Var "B") (Pair dot (Var "beta")))
-      (rule (Var "B") (Var "beta"))
+      (Var "rule")
       (span "j" "j")
     -- Some helper functions, to make the code more readable
     item r s = Union . Left $ Pair r s
@@ -232,11 +238,11 @@ cfgBaseItems inp cfgRules =
     dot = I.Unit
 
 
--- -- | CFG grammar functions
--- cfgFuns :: P.Grammar T.Text
--- cfgFuns = P.emptyGram
---   { P.funMap = M.singleton (P.FunName "append") appendI
---   }
+-- | CFG grammar functions
+cfgFunSet :: P.FunSet T.Text
+cfgFunSet = P.emptyFunSet
+  { P.funMap = M.singleton (P.FunName "append") append
+  }
 
 
 testCFG :: IO ()
@@ -268,6 +274,6 @@ testCFG = do
           | i == zero && j == slen -> True
         _ -> False
   -- forM_ (S.toList baseItems) print
-  chartParse baseItems ruleMap isFinal >>= \case
+  chartParse cfgFunSet baseItems ruleMap isFinal >>= \case
     Nothing -> putStrLn "# No parse found"
     Just it -> print it 
