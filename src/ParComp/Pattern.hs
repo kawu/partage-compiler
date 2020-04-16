@@ -303,10 +303,8 @@ match pt it =
 --         Nothing -> do
 --           S.put env
 --           match p2 it
-    (AndP p1 p2, it) -> error "AndP not implemented yet!"
---     (AndP p1 p2, it) -> do
---       match p1 it
---       match p2 it
+    (AndP p1 p2, it) ->
+      match p1 it >>= match p2
     (Let x e y, it) -> do
       it' <- match e it
       withLocalEnv $ do
@@ -350,7 +348,7 @@ close p =
     App fname p -> do
       f <- retrieveFun fname
       f <$> close p
-    -- Fail in case of logical patterns (TODO: ???)
+    -- Fail in case of logical patterns, recursive patterns, etc.
     OrP p1 p2 -> error "close OrP"
     AndP p1 p2 -> error "close AndP"
     Let x e y -> error "close Let"
