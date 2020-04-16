@@ -1,9 +1,10 @@
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
 
 
--- | Simple, non-efficient parsing with deduction rules
+-- | Parsing with deduction rules and indexing structures
 
 
 module ParComp.Parser
@@ -13,6 +14,10 @@ module ParComp.Parser
 
 import           Control.Monad (forM_)
 import qualified Control.Monad.State.Strict as ST
+
+import qualified Pipes as Pipes
+
+import           Data.Lens.Light
 
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -24,48 +29,9 @@ import qualified ParComp.Pattern as P
 import           ParComp.Pattern (Pattern(..))
 
 
--- | State of the parser
-data State sym = State
-  { agenda :: S.Set (I.Item sym)
-  , chart :: S.Set (I.Item sym)
-  } deriving (Show, Eq, Ord)
-
-
--- | Empty state
-emptyState :: State sym
-emptyState = State S.empty S.empty
-
-
--- | Remove an item from agenda
-popFromAgenda :: (Monad m) => ST.StateT (State sym) m (Maybe (I.Item sym))
-popFromAgenda = do
-  st@State{..} <- ST.get
-  case S.minView agenda of
-    Nothing -> return Nothing
-    Just (x, agenda') -> do
-      ST.put $ st {agenda = agenda'}
-      return (Just x)
-
-
--- | Remove an item from agenda
-addToAgenda :: (Monad m, Ord sym) => I.Item sym -> ST.StateT (State sym) m ()
-addToAgenda x = do
-  ST.modify' $ \st -> st
-    { agenda = S.insert x (agenda st) }
-
-
--- | Remove an item from agenda
-addToChart :: (Monad m, Ord sym) => I.Item sym -> ST.StateT (State sym) m ()
-addToChart x = do
-  ST.modify' $ \st -> st
-    { chart = S.insert x (chart st) }
-
-
--- | Retrieve the chart subsets of the given length
-chartSubsets :: (Monad m) => Int -> ST.StateT (State sym) m [[I.Item sym]]
-chartSubsets k = do
-  ch <- ST.gets chart
-  return $ subsets k (S.toList ch)
+--------------------------------------------------
+-- Utils
+--------------------------------------------------
 
 
 -- | Return subsets of the given size
@@ -102,6 +68,109 @@ inject x (x' : xs) =
       return $ x' : xs'
 
 
+--------------------------------------------------
+-- State (chart, agenda, indexes)
+--------------------------------------------------
+
+
+-- | Index is a map from keys (see `P.bindAllTODO`) to sets of items.
+type Index sym var = M.Map
+  (P.Key sym var)
+  (S.Set (I.Item sym))
+
+
+-- | State of the parser
+data State sym var = State
+  { _agenda :: S.Set (I.Item sym)
+  , _chart :: S.Set (I.Item sym)
+  , _indexMap :: M.Map (P.Lock sym var) (Index sym var)
+  } deriving (Show, Eq, Ord)
+$( makeLenses [''State] )
+
+
+-- | Chart parsing monad transformer
+type ChartT sym var m = ST.StateT (State sym var) m
+
+
+-- | Empty state
+--
+-- TODO: The set of index locks should be established initially and fixed
+-- throughout the entire parsing process.  Also, `registerIndex` should not be
+-- available.
+--
+emptyState :: State sym var
+emptyState = State S.empty S.empty M.empty
+
+
+-- | Remove an item from agenda
+popFromAgenda :: (Monad m) => ChartT sym var m (Maybe (I.Item sym))
+popFromAgenda = do
+  st <- ST.get
+  case S.minView (getL agenda st) of
+    Nothing -> return Nothing
+    Just (x, agenda') -> do
+      ST.put $ setL agenda agenda' st
+      return (Just x)
+
+
+-- | Remove an item from agenda.
+addToAgenda :: (Monad m, Ord sym) => I.Item sym -> ChartT sym var m ()
+addToAgenda x = ST.modify' $ modL' agenda (S.insert x)
+
+
+-- | Add an item to a chart (also put it in the corresponding indexing
+-- structures).
+addToChart :: (Monad m, Ord sym) => I.Item sym -> ChartT sym var m ()
+addToChart x = do
+  ST.modify' $ modL' chart (S.insert x)
+  -- TODO: put the item in the corresponding indexing structures
+
+
+-- | Retrieve the chart subsets of the given length
+chartSubsets :: (Monad m) => Int -> ChartT sym var m [[I.Item sym]]
+chartSubsets k = do
+  ch <- ST.gets $ getL chart
+  return $ subsets k (S.toList ch)
+
+
+-- | Register an index with the given lock.
+registerLock
+  :: (Monad m, Ord sym, Ord var)
+  => P.Lock sym var
+  -> ChartT sym var m ()
+registerLock lock =
+  ST.modify' $ modL' indexMap (M.insert lock M.empty)
+
+
+--------------------------------------------------
+-- Indexing
+--------------------------------------------------
+
+
+-- | Generate all the locks for the given rule.
+--
+-- TODO: Should be performed in an empty environment?
+--
+locksFor
+  -- TODO: trim down the list of class requirements
+  :: (Monad m, Show sym, Show var, Eq sym, Ord var)
+  => P.Rule sym var
+  -> P.MatchT sym var m (P.Lock sym var)
+locksFor rule = do
+  (main, rest) <- each $ pickOne (P.antecedents rule)
+  P.dummyMatch main
+  case rest of
+    [other] -> P.mkLock other
+    _ -> error "locksFor: doesn't handle non-binary rules yet"
+  where
+    each = Pipes.Select . Pipes.each
+
+
+--------------------------------------------------
+-- Parsing
+--------------------------------------------------
+
+
 -- | Perform chart parsing with the given grammar and deduction rules.
 chartParse
   :: (Show sym, Show var, Ord sym, Ord var)
@@ -116,11 +185,28 @@ chartParse
   -> IO (Maybe (I.Item sym))
 chartParse funSet baseItems ruleMap isFinal =
 
-  flip ST.evalStateT emptyState $ do 
+  flip ST.evalStateT emptyState $ do
+    -- Register all the locks
+    P.runMatchT funSet $ do
+      rule <- each $ M.elems ruleMap
+      ST.liftIO $ do
+        T.putStr "# Rule: "
+        print rule
+      lock <- locksFor rule
+      ST.liftIO $ do
+        T.putStr "# Lock: "
+        print lock
+      P.lift $ registerLock lock
+
+    -- Put all base items to agenda
     mapM_ addToAgenda (S.toList baseItems)
+
+    -- Process the agenda
     processAgenda
 
   where
+
+    each = Pipes.Select . Pipes.each
 
     -- Process agenda until empty, or until final item found
     processAgenda = do
@@ -159,7 +245,7 @@ chartParse funSet baseItems ruleMap isFinal =
 --               print items'
             P.runMatchT funSet $ do
               result <- P.apply rule items'
-              ST.lift . ST.lift $ addToAgenda result
+              P.lift $ addToAgenda result
               -- We managed to apply a rule!
 --               ST.liftIO $ do
 --                 T.putStr "# "

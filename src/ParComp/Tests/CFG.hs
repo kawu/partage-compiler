@@ -31,7 +31,7 @@ import           Debug.Trace (trace)
 -- -- | CFG complete rule
 -- complete :: P.Rule T.Text T.Text
 -- complete =
---   P.Rule [leftP, rightP] consP P.CTrue
+--   P.Rule [leftP, rightP] consP P.TrueC
 --   where
 --     leftP = Pair
 --       (Pair (Var "A") (Pair (Var "B") (Var "beta")))
@@ -63,17 +63,19 @@ type Patt = Pattern T.Text T.Text
 
 -- | Match suffix.
 suffix :: Patt -> Patt
-suffix p = OrP p (Pair Any $ suffix p)
+-- suffix p = Or p (Pair Any $ suffix p)
+suffix p = Fix $ Or p (Pair Any Rec)
 
 
 -- | Remove suffix starting from the first element which satisfies the given
 -- pattern.
 removeSuffix :: Patt -> Patt
 removeSuffix p =
-  OrP p1 (OrP p2 p3)
+  Fix $ Or p1 (Or p2 p3)
   where
     p1 = Let Any (Pair p Any) nil
-    p2 = Pair Any (removeSuffix p)
+    -- p2 = Pair Any (removeSuffix p)
+    p2 = Pair Any Rec
     p3 = nil
     nil = Const I.Unit
 
@@ -85,7 +87,7 @@ removeSuffix p =
 --
 splitAt :: Patt -> Patt
 splitAt p =
-  Fix $ OrP p1 (OrP p2 p3)
+  Fix $ Or p1 (Or p2 p3)
   where
     p1 = Let
       (Var "suff")
@@ -114,7 +116,7 @@ splitAt p =
 --   go 0
 --   where
 --     go k = 
---       OrP p1 (OrP p2 p3)
+--       Or p1 (Or p2 p3)
 --       where
 --         p1 = Let
 --           (var "suffix")
@@ -135,7 +137,7 @@ splitAt p =
 -- | CFG complete rule with dots
 complete :: P.Rule T.Text T.Text
 complete =
-  P.Rule [leftP, rightP] downP P.CTrue
+  P.Rule [leftP, rightP] downP P.TrueC
   where
     leftP = item
       (rule (Var "A")
@@ -175,7 +177,7 @@ complete =
 -- | CFG predict rule
 predict :: P.Rule T.Text T.Text
 predict =
-  P.Rule [leftP, rightP] downP P.CTrue
+  P.Rule [leftP, rightP] downP P.TrueC
   where
     leftP = item
       (rule Any
