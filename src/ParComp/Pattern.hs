@@ -256,7 +256,8 @@ bindLVar
 bindLVar v it = S.modify' . modL lenv $ M.insert v it
 
 
--- | Perform matching in a local environment.
+-- | Perform the given patter matching in a local environment, restoring the
+-- values of all the local variables at the end.
 withLocalEnv
   :: (P.MonadIO m)
   => MatchT sym var lvar m a
@@ -477,11 +478,16 @@ close = \case
   Let x e y -> do
     it <- close e
     withLocalEnv $ do
+      -- Since `x` should contain only local variables, we can (relatively)
+      -- safely match it with `it`
       match x it
       close y
   -- Not sure what to do with the three patterns below.  The intuitive
   -- implementations are given below, but they would not necessarily provide
-  -- the desired behavior (especially in case of Fix/Ref).
+  -- the desired behavior (especially in case of Fix/Ref).  In case of `Via`,
+  -- the intuitive implementation would require performing the match with
+  -- possibly global variables.  We could alternatively perform the @close x@
+  -- operation beforehand.
   Via _ _ -> error "close Via"
   Fix _ -> error "close Fix"
   Rec -> error "close Rec"
@@ -584,7 +590,7 @@ mkLock = \case
     lookupVar v >>= \case
       Just it -> pure $ Var v
       Nothing -> pure Any
-  LVar v -> error "mkLock LVar: not sure what to do here yet"
+  LVar v -> error "mkLock LVar"
   Any -> pure Any
   App fname p -> App fname <$> mkLock p
   Or x y -> Or <$> mkLock x <*> mkLock y
@@ -630,7 +636,6 @@ itemKeyFor
   => FunSet sym
   -> I.Item sym
   -> Lock sym var lvar
-  -- -> P.Producer (Key sym var) m ()
   -> P.ListT m (Key sym var)
 itemKeyFor funSet item lock = do
   P.Select $ _itemKeyFor funSet item lock P.yield
@@ -646,9 +651,9 @@ _itemKeyFor
   -> m ()
 _itemKeyFor funSet item lock handler = do
   runMatchT funSet $ do
-    -- TODO: Since we ignore the item below (result of the match), it may be that
-    -- we will generate several keys which are identical.  This might be a
-    -- problem?  At least from the efficiency point of view.
+    -- TODO: Since we ignore the item below (result of the match), it may be
+    -- that we will generate several keys which are identical.  This may be a
+    -- problem (or not) from the efficiency point of view.
     _ <- match lock item
     key <- S.gets (getL genv)
     lift $ handler key
