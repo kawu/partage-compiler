@@ -15,7 +15,6 @@ module ParComp.Parser
 import           Control.Monad (forM_, guard, unless)
 import qualified Control.Monad.State.Strict as ST
 import           Control.Monad.State.Strict (lift, liftIO)
-import           Control.Applicative (Alternative, (<|>), empty)
 
 import qualified Pipes as Pipes
 import           Pipes (MonadIO)
@@ -38,44 +37,16 @@ import           ParComp.Pattern (Pattern(..))
 --------------------------------------------------
 
 
--- | @choice ps@ tries to apply the actions in the list @ps@ in order, until
--- one of them succeeds. Returns the value of the succeeding action.
-choice :: Alternative f => [f a] -> f a
-choice = foldr (<|>) empty
-
-
--- | Return subsets of the given size
-subsets :: Int -> [a] -> [[a]]
-subsets 0 _ = [[]]
-subsets k xs = do
-  (x, rest) <- pickOne xs
-  subset <- subsets (k - 1) rest
-  return $ x : subset
-
-
--- | All possible ways of picking one element from the (non-empty) list
-pickOne :: [a] -> [(a, [a])]
--- pickOne [x] = [(x, [])]
-pickOne [] = []
-pickOne (x:xs) = 
-  here : there
-  where
-    here = (x, xs)
-    there = do
-      (y, ys) <- pickOne xs
-      return (y, x:ys)
-
-
--- | All possible ways of injecting the given item among the list of items
-inject :: a -> [a] -> [[a]]
-inject x [] = [[x]]
-inject x (x' : xs) =
-  here : there
-  where
-    here = x : x' : xs
-    there = do
-      xs' <- inject x xs
-      return $ x' : xs'
+-- -- | All possible ways of injecting the given item among the list of items
+-- inject :: a -> [a] -> [[a]]
+-- inject x [] = [[x]]
+-- inject x (x' : xs) =
+--   here : there
+--   where
+--     here = x : x' : xs
+--     there = do
+--       xs' <- inject x xs
+--       return $ x' : xs'
 
 
 --------------------------------------------------
@@ -83,7 +54,8 @@ inject x (x' : xs) =
 --------------------------------------------------
 
 
--- | Index is a map from keys (see `P.bindAllTODO`) to sets of items.
+-- | Index is a map from `Key`s to sets of items.  Each `Key` is defined within
+-- the context of the corresponding `Lock` (see `_indexMap` below).
 type Index sym var = M.Map
   (P.Key sym var)
   (S.Set (I.Item sym))
@@ -142,33 +114,21 @@ addToChart
   -> I.Item sym
   -> ChartT sym var lvar m ()
 addToChart funSet x = do
-  liftIO $ do
-    T.putStr ">>> Item: "
-    print x
+--   liftIO $ do
+--     T.putStr ">>> Item: "
+--     print x
   ST.modify' $ modL' chart (S.insert x)
   locks <- ST.gets $ M.keys . getL indexMap
   forM_ locks $ \lock -> do
-    liftIO $ do
-      T.putStr ">>> Lock: "
-      print lock
-    P.itemKeyFor funSet x lock $ \key -> do
-      liftIO $ do
-        T.putStr ">>> Key: "
-        print key
-      saveKey lock key x
---     P.runMatchT funSet $ do
---       key <- P.itemKeyFor x lock
+--     liftIO $ do
+--       T.putStr ">>> Lock: "
+--       print lock
+    Pipes.runListT $ do
+      key <- P.itemKeyFor funSet x lock
 --       liftIO $ do
 --         T.putStr ">>> Key: "
 --         print key
---       P.lift $ saveKey lock key x
-
-
--- | Retrieve the chart subsets of the given length
-chartSubsets :: (Monad m) => Int -> ChartT sym var lvar m [[I.Item sym]]
-chartSubsets k = do
-  ch <- ST.gets $ getL chart
-  return $ subsets k (S.toList ch)
+      lift $ saveKey lock key x
 
 
 -- | Register an index with the given lock.
@@ -209,59 +169,6 @@ retrieveIndex lock =
 --------------------------------------------------
 
 
--- -- | Generate all the locks for the given rule.
--- --
--- -- TODO: Should be performed in a fresh environment?
--- --
--- locksFor
---   :: (MonadIO m, Eq sym, Ord var)
---   => P.Rule sym var lvar
---   -> P.MatchT sym var lvar m (P.Lock sym var lvar)
--- locksFor rule = P.withLocalGlobalEnv $ do
---   (main, rest) <- each $ pickOne (P.antecedents rule)
---   P.dummyMatch main
---   case rest of
---     [other] -> P.mkLock other
---     _ -> error "locksFor: doesn't handle non-binary rules"
---   where
---     each = Pipes.Select . Pipes.each
-
-
--- | Generate all the locks for the given rule.
-locksFor
-  :: (MonadIO m, Eq sym, Ord var)
-  => P.FunSet sym
-    -- ^ Set of registered functions
-  -> P.Rule sym var lvar
-  -> (P.Lock sym var lvar -> m ())  -- ^ Monadic lock handler
-  -> m ()
-locksFor funSet rule handler = do
-  P.runMatchT funSet $ do
-    forEach (pickOne (P.antecedents rule)) $ \(main, rest) -> do
-      P.dummyMatch main
-      case rest of
-        [other] -> do
-          lock <- P.mkLock other
-          P.lift $ handler lock
-        _ -> error "locksFor: doesn't handle non-binary rules"
-
-
--- | Perform the matching computation for each element in the list.  Start each
--- matching from a fresh state.
-forEach
-  :: (Monad m)
-  => [a]
-  -> (a -> P.MatchT sym var lvar m b)
-  -> P.MatchT sym var lvar m b
-forEach xs m = do
-  state <- ST.get
-  choice $ do
-    x <- xs
-    return $ do
-      ST.put state
-      m x
-
-
 -- | Apply rule.
 applyRule
   :: (MonadIO m, Show sym, Show var, Show lvar, Ord sym, Ord var, Ord lvar)
@@ -271,43 +178,43 @@ applyRule
   -> P.MatchT sym var lvar (ChartT sym var lvar m) (I.Item sym)
 applyRule ruleName rule mainItem = do
   -- For each split into the main pattern and the remaining patterns
-  forEach (pickOne $ P.antecedents rule) $ \(mainPatt, restPatt) -> do
+  P.forEach (P.pickOne $ P.antecedents rule) $ \(mainPatt, restPatt) -> do
     P.match mainPatt mainItem
     case restPatt of
       [otherPatt] -> do
         lock <- P.mkLock otherPatt
-        liftIO $ do
-          T.putStr "@@@ Lock: "
-          print lock
+--         liftIO $ do
+--           T.putStr "@@@ Lock: "
+--           print lock
         index <- P.lift $ retrieveIndex lock
-        liftIO $ do
-          T.putStr "@@@ Index: "
-          print index
+--         liftIO $ do
+--           T.putStr "@@@ Index: "
+--           print index
         key <- P.keyFor lock
-        liftIO $ do
-          T.putStr "@@@ Key: "
-          print key
+--         liftIO $ do
+--           T.putStr "@@@ Key: "
+--           print key
         let otherItems =
               maybe [] S.toList $ M.lookup key index
-        forEach otherItems $ \otherItem -> do
-          liftIO $ do
-            T.putStr "@@@ Other: "
-            print otherItem
+        P.forEach otherItems $ \otherItem -> do
+--           liftIO $ do
+--             T.putStr "@@@ Other: "
+--             print otherItem
           P.match otherPatt otherItem
-          liftIO $ do
-            T.putStrLn "@@@ Matched with Other"
+--           liftIO $ do
+--             T.putStrLn "@@@ Matched with Other"
           P.check (P.condition rule) >>= guard
-          liftIO $ do
-            T.putStrLn "@@@ Conditions checked"
+--           liftIO $ do
+--             T.putStrLn "@@@ Conditions checked"
           result <- P.close (P.consequent rule)
           -- We managed to apply a rule!
-          liftIO $ do
-            T.putStr "@@@ "
-            T.putStr ruleName
-            T.putStr ": "
-            putStr $ show [mainItem, otherItem]
-            T.putStr " => "
-            print result
+--           liftIO $ do
+--             T.putStr "@@@ "
+--             T.putStr ruleName
+--             T.putStr ": "
+--             putStr $ show [mainItem, otherItem]
+--             T.putStr " => "
+--             print result
           -- Return the result
           return result
       _ -> error "applyRule: doesn't handle non-binary rules"
@@ -334,32 +241,19 @@ chartParse
   -> IO (Maybe (I.Item sym))
 chartParse funSet baseItems ruleMap isFinal =
 
---   flip ST.evalStateT emptyState $ do
---     -- Register all the locks
---     P.runMatchT funSet $ do
---       rule <- each $ M.elems ruleMap
---       liftIO $ do
---         T.putStr "# Rule: "
---         print rule
---       lock <- locksFor rule
---       liftIO $ do
---         T.putStr "# Lock: "
---         print lock
---       P.lift $ registerLock lock
-
   flip ST.evalStateT emptyState $ do
 
     -- Register all the locks
     Pipes.runListT $ do
       rule <- each $ M.elems ruleMap
-      liftIO $ do
-        T.putStr "# Rule: "
-        print rule
-      locksFor funSet rule $ \lock -> do
-        liftIO $ do
-          T.putStr "# Lock: "
-          print lock
-        lift $ registerLock lock
+--       liftIO $ do
+--         T.putStr "### Rule: "
+--         print rule
+      lock <- P.locksFor funSet rule
+--       liftIO $ do
+--         T.putStr "### Lock: "
+--         print lock
+      lift $ registerLock lock
 
     -- Put all base items to agenda
     mapM_ addToAgenda (S.toList baseItems)
@@ -371,7 +265,7 @@ chartParse funSet baseItems ruleMap isFinal =
 
     each = Pipes.Select . Pipes.each
 
-    -- Process agenda until empty, or until final item found
+    -- Process agenda until final item found (or until empty)
     processAgenda = do
       popFromAgenda >>= \case
         Nothing -> return Nothing
@@ -386,9 +280,9 @@ chartParse funSet baseItems ruleMap isFinal =
 
     -- Try to match the given item with other items already in the chart
     handleItem item = do
-      liftIO $ do
-        T.putStr "### Popped: "
-        print item
+--       liftIO $ do
+--         T.putStr "### Popped: "
+--         print item
       -- For each deduction rule
       forM_ (M.toList ruleMap) $ \(ruleName, rule) -> do
         P.runMatchT funSet $ do

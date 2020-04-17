@@ -27,6 +27,7 @@ module ParComp.Pattern
   , match
   , check
   , close
+  , forEach
 
   -- * Indexing
   , Lock
@@ -34,13 +35,17 @@ module ParComp.Pattern
   , mkLock
   , itemKeyFor
   , keyFor
+  , locksFor
+
+  -- * Utils
+  , pickOne
   ) where
 
 
-import qualified System.Random as R
+-- import qualified System.Random as R
 
 import           Control.Monad (guard, void)
-import           Control.Applicative (empty, (<|>))
+import           Control.Applicative (Alternative, (<|>), empty)
 import           Control.Monad.Trans.Maybe (MaybeT(..))
 import qualified Control.Monad.State.Strict as S
 import qualified Control.Monad.RWS.Strict as RWS
@@ -251,30 +256,6 @@ bindLVar
 bindLVar v it = S.modify' . modL lenv $ M.insert v it
 
 
--- -- | Perform matching in a local global environment.  TODO: temporary function,
--- -- refactor and remove!
--- withLocalGlobalEnv :: (P.MonadIO m) => MatchT sym var lvar m a -> MatchT sym var lvar m a
--- withLocalGlobalEnv m = do
---   ge <- S.gets (getL genv)
---   le <- S.gets (getL lenv)
---   x <- m
---   S.modify' (setL genv ge)
---   S.modify' (setL lenv le)
---   return x
-
-
--- -- | Perform matching in a local environment.
--- withLocalEnv :: (P.MonadIO m) => MatchT sym var lvar m a -> MatchT sym var lvar m a
--- withLocalEnv m = do
---   -- TODO: Does this actually work in general?  What if `m` fails?  Then
---   -- environment is not restored.  This can be a serious problem, since we want
---   -- to allow disjunctive (`Or`) patterns.
---   e <- S.gets (getL lenv)
---   x <- m
---   S.modify' (setL lenv e)
---   return x
-
-
 -- | Perform matching in a local environment.
 withLocalEnv
   :: (P.MonadIO m)
@@ -282,15 +263,16 @@ withLocalEnv
   -> MatchT sym var lvar m a
 withLocalEnv m = do
   e <- S.gets (getL lenv)
-  mark <- (`mod` 1000) <$> P.liftIO (R.randomIO :: IO Int)
-  P.liftIO $ do
-    putStr ">>> IN: "
-    print mark
+--   mark <- (`mod` 1000) <$> P.liftIO (R.randomIO :: IO Int)
+--   P.liftIO $ do
+--     putStr ">>> IN: "
+--     print mark
   m <|> do
+    -- Restore the local environment
     S.modify' (setL lenv e)
-    P.liftIO $ do
-      putStr "<<< OUT: "
-      print mark
+--     P.liftIO $ do
+--       putStr "<<< OUT: "
+--       print mark
     empty
 
 
@@ -302,22 +284,19 @@ withFix
   -> MatchT sym var lvar m a
 withFix p m = do
   -- Retrieve the old fix
-  oldFix <- S.lift . S.gets $ getL fix
+  oldFix <- S.gets $ getL fix
   -- Register the new fix
-  S.lift . S.modify' $ setL fix (Just p)
-  x <- m
-  -- Restore the old fix
-  -- TODO: similarly as with `withLocalEnv`, it's not clear if this is correct.
-  -- It seems there's no guarantee that the original Fix will be restored,
-  -- because `x <- m` above can fail.
-  S.lift . S.modify' $ setL fix oldFix
-  return x
+  S.modify' $ setL fix (Just p)
+  m <|> do
+    -- Restore the old fix
+    S.modify' $ setL fix oldFix
+    empty
 
 
 -- | Retrieve the fixed recursive pattern.
 fixed :: (Monad m) => MatchT sym var lvar m (Pattern sym var lvar)
 fixed = do
-  mayFix <- S.lift . S.gets $ getL fix
+  mayFix <- S.gets $ getL fix
   case mayFix of
     Nothing -> empty
     Just p  -> return p
@@ -357,6 +336,22 @@ retrieveFun funName = do
       , "' does not exist"
       ]
     Just fun -> return fun
+
+
+-- | Perform the matching computation for each element in the list.  Start each
+-- matching from a fresh state.
+forEach
+  :: (Monad m)
+  => [a]
+  -> (a -> MatchT sym var lvar m b)
+  -> MatchT sym var lvar m b
+forEach xs m = do
+  state <- S.get
+  choice $ do
+    x <- xs
+    return $ do
+      S.put state
+      m x
 
 
 -- | Match the given pattern with the given item expression and bind item
@@ -599,22 +594,34 @@ mkLock = \case
   Rec -> pure Rec
 
 
--- -- | Retrieve the key(s) of the item for the given lock.
--- --
--- -- TODO: the function must be evaluated in a fresh environment.
--- -- TODO: `withLocalGlobalEnv` is not effective if the match fails!
--- --
--- itemKeyFor
---   :: (P.MonadIO m, Eq sym, Ord var, Ord lvar, Show sym, Show var, Show lvar)
---   => I.Item sym
---   -> Lock sym var lvar
---   -> MatchT sym var lvar m (Key sym var)
--- itemKeyFor x lock = withLocalGlobalEnv $ do
---   -- TODO: Since we ignore the item below (result of the match), it may be that
---   -- we will generate several keys which are identical.  This might be a
---   -- problem?  At least from the efficiency point of view.
---   _ <- match lock x
---   S.gets (getL genv)
+-- | Generate all the locks for the given rule.
+locksFor
+  :: (P.MonadIO m, Eq sym, Ord var)
+  => FunSet sym
+    -- ^ Set of registered functions
+  -> Rule sym var lvar
+  -> P.ListT m (Lock sym var lvar)
+locksFor funSet rule  =
+  P.Select $ _locksFor funSet rule P.yield
+
+
+-- | Generate all the locks for the given rule.
+_locksFor
+  :: (P.MonadIO m, Eq sym, Ord var)
+  => FunSet sym
+    -- ^ Set of registered functions
+  -> Rule sym var lvar
+  -> (Lock sym var lvar -> m ())  -- ^ Monadic lock handler
+  -> m ()
+_locksFor funSet rule handler = do
+  runMatchT funSet $ do
+    forEach (pickOne (antecedents rule)) $ \(main, rest) -> do
+      dummyMatch main
+      case rest of
+        [other] -> do
+          lock <- mkLock other
+          lift $ handler lock
+        _ -> error "locksFor: doesn't handle non-binary rules"
 
 
 -- | Retrieve the key(s) of the item for the given lock.
@@ -623,9 +630,21 @@ itemKeyFor
   => FunSet sym
   -> I.Item sym
   -> Lock sym var lvar
+  -- -> P.Producer (Key sym var) m ()
+  -> P.ListT m (Key sym var)
+itemKeyFor funSet item lock = do
+  P.Select $ _itemKeyFor funSet item lock P.yield
+
+
+-- | Retrieve the key(s) of the item for the given lock.
+_itemKeyFor
+  :: (P.MonadIO m, Eq sym, Ord var, Ord lvar, Show sym, Show var, Show lvar)
+  => FunSet sym
+  -> I.Item sym
+  -> Lock sym var lvar
   -> (Key sym var -> m ()) -- ^ Monadic key handler
   -> m ()
-itemKeyFor funSet item lock handler = do
+_itemKeyFor funSet item lock handler = do
   runMatchT funSet $ do
     -- TODO: Since we ignore the item below (result of the match), it may be that
     -- we will generate several keys which are identical.  This might be a
@@ -711,6 +730,38 @@ apply Rule{..} items = do
   check condition >>= guard
   -- Convert the consequent to the resulting item
   close consequent
+
+
+--------------------------------------------------
+-- Utils
+--------------------------------------------------
+
+
+-- | Return subsets of the given size
+subsets :: Int -> [a] -> [[a]]
+subsets 0 _ = [[]]
+subsets k xs = do
+  (x, rest) <- pickOne xs
+  subset <- subsets (k - 1) rest
+  return $ x : subset
+
+
+-- | All possible ways of picking one element from the (non-empty) list
+pickOne :: [a] -> [(a, [a])]
+pickOne [] = []
+pickOne (x:xs) =
+  here : there
+  where
+    here = (x, xs)
+    there = do
+      (y, ys) <- pickOne xs
+      return (y, x:ys)
+
+
+-- | @choice ps@ tries to apply the actions in the list @ps@ in order, until
+-- one of them succeeds. Returns the value of the succeeding action.
+choice :: Alternative f => [f a] -> f a
+choice = foldr (<|>) empty
 
 
 --------------------------------------------------
