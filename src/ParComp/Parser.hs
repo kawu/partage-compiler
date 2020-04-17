@@ -14,6 +14,7 @@ module ParComp.Parser
 
 import           Control.Monad (forM_, guard, unless)
 import qualified Control.Monad.State.Strict as ST
+import           Control.Monad.State.Strict (lift, liftIO)
 import           Control.Applicative (Alternative, (<|>), empty)
 
 import qualified Pipes as Pipes
@@ -89,16 +90,16 @@ type Index sym var = M.Map
 
 
 -- | State of the parser
-data State sym var = State
+data State sym var lvar = State
   { _agenda :: S.Set (I.Item sym)
   , _chart :: S.Set (I.Item sym)
-  , _indexMap :: M.Map (P.Lock sym var) (Index sym var)
+  , _indexMap :: M.Map (P.Lock sym var lvar) (Index sym var)
   } deriving (Show, Eq, Ord)
 $( makeLenses [''State] )
 
 
 -- | Chart parsing monad transformer
-type ChartT sym var m = ST.StateT (State sym var) m
+type ChartT sym var lvar m = ST.StateT (State sym var lvar) m
 
 
 -- | Empty state
@@ -107,12 +108,12 @@ type ChartT sym var m = ST.StateT (State sym var) m
 -- throughout the entire parsing process.  Also, `registerIndex` should not be
 -- available.
 --
-emptyState :: State sym var
+emptyState :: State sym var lvar
 emptyState = State S.empty S.empty M.empty
 
 
 -- | Remove an item from agenda
-popFromAgenda :: (Monad m) => ChartT sym var m (Maybe (I.Item sym))
+popFromAgenda :: (Monad m) => ChartT sym var lvar m (Maybe (I.Item sym))
 popFromAgenda = do
   st <- ST.get
   case S.minView (getL agenda st) of
@@ -123,7 +124,7 @@ popFromAgenda = do
 
 
 -- | Remove an item from agenda.
-addToAgenda :: (Monad m, Ord sym) => I.Item sym -> ChartT sym var m ()
+addToAgenda :: (Monad m, Ord sym) => I.Item sym -> ChartT sym var lvar m ()
 addToAgenda x = do
   state <- ST.get
   let ag = getL agenda state
@@ -135,31 +136,36 @@ addToAgenda x = do
 -- | Add an item to a chart (also put it in the corresponding indexing
 -- structures).
 addToChart
-  :: (MonadIO m, Ord sym, Ord var, Show sym, Show var)
+  :: (MonadIO m, Show sym, Show var, Show lvar, Ord sym, Ord var, Ord lvar)
   => P.FunSet sym
     -- ^ Set of registered functions
   -> I.Item sym
-  -> ChartT sym var m ()
+  -> ChartT sym var lvar m ()
 addToChart funSet x = do
---   ST.liftIO $ do
---     T.putStr ">>> Item: "
---     print x
+  liftIO $ do
+    T.putStr ">>> Item: "
+    print x
   ST.modify' $ modL' chart (S.insert x)
   locks <- ST.gets $ M.keys . getL indexMap
   forM_ locks $ \lock -> do
---     ST.liftIO $ do
---       T.putStr ">>> Lock: "
---       print lock
-    P.runMatchT funSet $ do
-      key <- P.itemKeyFor x lock
---       ST.liftIO $ do
+    liftIO $ do
+      T.putStr ">>> Lock: "
+      print lock
+    P.itemKeyFor funSet x lock $ \key -> do
+      liftIO $ do
+        T.putStr ">>> Key: "
+        print key
+      saveKey lock key x
+--     P.runMatchT funSet $ do
+--       key <- P.itemKeyFor x lock
+--       liftIO $ do
 --         T.putStr ">>> Key: "
 --         print key
-      P.lift $ saveKey lock key x
+--       P.lift $ saveKey lock key x
 
 
 -- | Retrieve the chart subsets of the given length
-chartSubsets :: (Monad m) => Int -> ChartT sym var m [[I.Item sym]]
+chartSubsets :: (Monad m) => Int -> ChartT sym var lvar m [[I.Item sym]]
 chartSubsets k = do
   ch <- ST.gets $ getL chart
   return $ subsets k (S.toList ch)
@@ -167,20 +173,20 @@ chartSubsets k = do
 
 -- | Register an index with the given lock.
 registerLock
-  :: (Monad m, Ord sym, Ord var)
-  => P.Lock sym var
-  -> ChartT sym var m ()
+  :: (Monad m, Ord sym, Ord var, Ord lvar)
+  => P.Lock sym var lvar
+  -> ChartT sym var lvar m ()
 registerLock lock =
   ST.modify' $ modL' indexMap (M.insert lock M.empty)
 
 
 -- | Save key for the given lock, together with the corresponding item.
 saveKey
-  :: (Monad m, Ord sym, Ord var)
-  => P.Lock sym var
+  :: (Monad m, Ord sym, Ord var, Ord lvar)
+  => P.Lock sym var lvar
   -> P.Key sym var
   -> I.Item sym
-  -> ChartT sym var m ()
+  -> ChartT sym var lvar m ()
 saveKey lock key item = ST.modify'
   . modL' indexMap
   $ M.insertWith
@@ -191,9 +197,9 @@ saveKey lock key item = ST.modify'
 
 -- | Retrieve the index with the given lock.
 retrieveIndex
-  :: (Monad m, Ord sym, Ord var)
-  => P.Lock sym var
-  -> ChartT sym var m (Index sym var)
+  :: (Monad m, Ord sym, Ord var, Ord lvar)
+  => P.Lock sym var lvar
+  -> ChartT sym var lvar m (Index sym var)
 retrieveIndex lock =
   ST.gets $ maybe M.empty id . M.lookup lock . getL indexMap
 
@@ -203,22 +209,41 @@ retrieveIndex lock =
 --------------------------------------------------
 
 
+-- -- | Generate all the locks for the given rule.
+-- --
+-- -- TODO: Should be performed in a fresh environment?
+-- --
+-- locksFor
+--   :: (MonadIO m, Eq sym, Ord var)
+--   => P.Rule sym var lvar
+--   -> P.MatchT sym var lvar m (P.Lock sym var lvar)
+-- locksFor rule = P.withLocalGlobalEnv $ do
+--   (main, rest) <- each $ pickOne (P.antecedents rule)
+--   P.dummyMatch main
+--   case rest of
+--     [other] -> P.mkLock other
+--     _ -> error "locksFor: doesn't handle non-binary rules"
+--   where
+--     each = Pipes.Select . Pipes.each
+
+
 -- | Generate all the locks for the given rule.
---
--- TODO: Should be performed in a fresh environment?
---
 locksFor
-  :: (Monad m, Eq sym, Ord var)
-  => P.Rule sym var
-  -> P.MatchT sym var m (P.Lock sym var)
-locksFor rule = P.withLocalEnv $ do
-  (main, rest) <- each $ pickOne (P.antecedents rule)
-  P.dummyMatch main
-  case rest of
-    [other] -> P.mkLock other
-    _ -> error "locksFor: doesn't handle non-binary rules"
-  where
-    each = Pipes.Select . Pipes.each
+  :: (MonadIO m, Eq sym, Ord var)
+  => P.FunSet sym
+    -- ^ Set of registered functions
+  -> P.Rule sym var lvar
+  -> (P.Lock sym var lvar -> m ())  -- ^ Monadic lock handler
+  -> m ()
+locksFor funSet rule handler = do
+  P.runMatchT funSet $ do
+    forEach (pickOne (P.antecedents rule)) $ \(main, rest) -> do
+      P.dummyMatch main
+      case rest of
+        [other] -> do
+          lock <- P.mkLock other
+          P.lift $ handler lock
+        _ -> error "locksFor: doesn't handle non-binary rules"
 
 
 -- | Perform the matching computation for each element in the list.  Start each
@@ -226,8 +251,8 @@ locksFor rule = P.withLocalEnv $ do
 forEach
   :: (Monad m)
   => [a]
-  -> (a -> P.MatchT sym var m b)
-  -> P.MatchT sym var m b
+  -> (a -> P.MatchT sym var lvar m b)
+  -> P.MatchT sym var lvar m b
 forEach xs m = do
   state <- ST.get
   choice $ do
@@ -239,11 +264,11 @@ forEach xs m = do
 
 -- | Apply rule.
 applyRule
-  :: (MonadIO m, Show sym, Show var, Ord sym, Ord var)
+  :: (MonadIO m, Show sym, Show var, Show lvar, Ord sym, Ord var, Ord lvar)
   => T.Text
-  -> P.Rule sym var
+  -> P.Rule sym var lvar
   -> I.Item sym
-  -> P.MatchT sym var (ChartT sym var m) (I.Item sym)
+  -> P.MatchT sym var lvar (ChartT sym var lvar m) (I.Item sym)
 applyRule ruleName rule mainItem = do
   -- For each split into the main pattern and the remaining patterns
   forEach (pickOne $ P.antecedents rule) $ \(mainPatt, restPatt) -> do
@@ -251,38 +276,38 @@ applyRule ruleName rule mainItem = do
     case restPatt of
       [otherPatt] -> do
         lock <- P.mkLock otherPatt
---         ST.liftIO $ do
---           T.putStr "@@@ Lock: "
---           print lock
+        liftIO $ do
+          T.putStr "@@@ Lock: "
+          print lock
         index <- P.lift $ retrieveIndex lock
---         ST.liftIO $ do
---           T.putStr "@@@ Index: "
---           print index
+        liftIO $ do
+          T.putStr "@@@ Index: "
+          print index
         key <- P.keyFor lock
---         ST.liftIO $ do
---           T.putStr "@@@ Key: "
---           print key
+        liftIO $ do
+          T.putStr "@@@ Key: "
+          print key
         let otherItems =
               maybe [] S.toList $ M.lookup key index
         forEach otherItems $ \otherItem -> do
---           ST.liftIO $ do
---             T.putStr "@@@ Other: "
---             print otherItem
+          liftIO $ do
+            T.putStr "@@@ Other: "
+            print otherItem
           P.match otherPatt otherItem
---           ST.liftIO $ do
---             T.putStrLn "@@@ Matched with Other"
+          liftIO $ do
+            T.putStrLn "@@@ Matched with Other"
           P.check (P.condition rule) >>= guard
---           ST.liftIO $ do
---             T.putStrLn "@@@ Conditions checked"
+          liftIO $ do
+            T.putStrLn "@@@ Conditions checked"
           result <- P.close (P.consequent rule)
           -- We managed to apply a rule!
---           ST.liftIO $ do
---             T.putStr "@@@ "
---             T.putStr ruleName
---             T.putStr ": "
---             putStr $ show [mainItem, otherItem]
---             T.putStr " => "
---             print result
+          liftIO $ do
+            T.putStr "@@@ "
+            T.putStr ruleName
+            T.putStr ": "
+            putStr $ show [mainItem, otherItem]
+            T.putStr " => "
+            print result
           -- Return the result
           return result
       _ -> error "applyRule: doesn't handle non-binary rules"
@@ -297,30 +322,44 @@ applyRule ruleName rule mainItem = do
 
 -- | Perform chart parsing with the given grammar and deduction rules.
 chartParse
-  :: (Show sym, Show var, Ord sym, Ord var)
+  :: (Show sym, Show var, Show lvar, Ord sym, Ord var, Ord lvar)
   => P.FunSet sym
     -- ^ Set of registered functions
   -> S.Set (I.Item sym)
     -- ^ Axiom-generated items
-  -> M.Map T.Text (P.Rule sym var)
+  -> M.Map T.Text (P.Rule sym var lvar)
     -- ^ Deduction rules (named)
   -> (I.Item sym -> Bool)
     -- ^ Is the item final?
   -> IO (Maybe (I.Item sym))
 chartParse funSet baseItems ruleMap isFinal =
 
-  flip ST.evalStateT emptyState $ do
-    -- Register all the locks
-    P.runMatchT funSet $ do
-      rule <- each $ M.elems ruleMap
---       ST.liftIO $ do
+--   flip ST.evalStateT emptyState $ do
+--     -- Register all the locks
+--     P.runMatchT funSet $ do
+--       rule <- each $ M.elems ruleMap
+--       liftIO $ do
 --         T.putStr "# Rule: "
 --         print rule
-      lock <- locksFor rule
---       ST.liftIO $ do
+--       lock <- locksFor rule
+--       liftIO $ do
 --         T.putStr "# Lock: "
 --         print lock
-      P.lift $ registerLock lock
+--       P.lift $ registerLock lock
+
+  flip ST.evalStateT emptyState $ do
+
+    -- Register all the locks
+    Pipes.runListT $ do
+      rule <- each $ M.elems ruleMap
+      liftIO $ do
+        T.putStr "# Rule: "
+        print rule
+      locksFor funSet rule $ \lock -> do
+        liftIO $ do
+          T.putStr "# Lock: "
+          print lock
+        lift $ registerLock lock
 
     -- Put all base items to agenda
     mapM_ addToAgenda (S.toList baseItems)
@@ -347,14 +386,11 @@ chartParse funSet baseItems ruleMap isFinal =
 
     -- Try to match the given item with other items already in the chart
     handleItem item = do
---       ST.liftIO $ do
---         T.putStr "### Popped: "
---         print item
+      liftIO $ do
+        T.putStr "### Popped: "
+        print item
       -- For each deduction rule
       forM_ (M.toList ruleMap) $ \(ruleName, rule) -> do
---         ST.liftIO $ do
---           T.putStr "# Rule: "
---           T.putStrLn ruleName
         P.runMatchT funSet $ do
           result <- applyRule ruleName rule item
           P.lift $ addToAgenda result

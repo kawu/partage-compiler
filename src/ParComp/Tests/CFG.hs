@@ -57,8 +57,9 @@ append (I.Pair xs ys) =
 append _ = error "append: argument not a pair of lists"
 
 
--- | Local pattern type synonym
-type Patt = Pattern T.Text T.Text
+-- | Local pattern and rule type synonyms
+type Patt = Pattern T.Text T.Text T.Text
+type Rule = P.Rule T.Text T.Text T.Text
 
 
 -- | Match suffix.
@@ -90,18 +91,18 @@ splitAt p =
   Fix $ Or p1 (Or p2 p3)
   where
     p1 = Let
-      (Var "suff")
+      (LVar "suff")
       (cons p Any)
-      (pair nil (Var "suff"))
+      (pair nil (LVar "suff"))
     p2 = Let
-      (pair (Var "x") (pair (Var "pref") (Var "suff")))
+      (pair (LVar "x") (pair (LVar "pref") (LVar "suff")))
       -- NOTE: we could simply write:
       --   `(cons Any (splitAt p))`
       -- However, we don't want recursion in our patterns, since this would
       -- prevent us from comparing them and storing them in dictionaries.
       -- Explicit recursion with `Fix` and `Rec` solves this problem.
       (cons Any Rec)
-      (pair (cons (Var "x") (Var "pref")) (Var "suff"))
+      (pair (cons (LVar "x") (LVar "pref")) (LVar "suff"))
     p3 = pair nil nil
     -- Helper functions
     nil = Const I.Unit
@@ -135,7 +136,7 @@ splitAt p =
 
 
 -- | CFG complete rule with dots
-complete :: P.Rule T.Text T.Text
+complete :: Rule
 complete =
   P.Rule [leftP, rightP] downP P.TrueC
   where
@@ -144,10 +145,6 @@ complete =
         ( Via (splitAt dot)
             (Pair (Var "alpha") (Pair dot (Pair (Var "B") (Var "beta"))))
         )
---         (AndP
---           (suffix $ Pair dot (Pair (Var "B") (Var "beta")))
---           (Let (Var "alpha") (removeSuffix dot) unit)
---         )
       )
       (span "i" "j")
     rightP = item
@@ -175,7 +172,7 @@ complete =
 
 
 -- | CFG predict rule
-predict :: P.Rule T.Text T.Text
+predict :: Rule
 predict =
   P.Rule [leftP, rightP] downP P.TrueC
   where
@@ -184,10 +181,6 @@ predict =
         ( Via (splitAt dot)
             (Pair Any (Pair dot (Pair (Var "B") Any)))
         )
---         (AndP
---           (suffix $ Pair dot (Pair (Var "B") (Var "beta")))
---           (Let (Var "alpha") (removeSuffix dot) unit)
---         )
       )
       (span "i" "j")
     rightP = Union . Right $ Via (rule (Var "B") Any) (Var "rule")

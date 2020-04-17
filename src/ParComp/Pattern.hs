@@ -27,7 +27,6 @@ module ParComp.Pattern
   , match
   , check
   , close
-  , withLocalEnv
 
   -- * Indexing
   , Lock
@@ -37,6 +36,8 @@ module ParComp.Pattern
   , keyFor
   ) where
 
+
+import qualified System.Random as R
 
 import           Control.Monad (guard, void)
 import           Control.Applicative (empty, (<|>))
@@ -96,45 +97,47 @@ emptyFunSet = FunSet M.empty M.empty
 
 
 -- | Pattern expression
-data Pattern sym var
+data Pattern sym var lvar
   -- | > Constant: match the given item expression
   = Const (Item sym)
   -- | > Pair: recursively match item pair
-  | Pair (Pattern sym var) (Pattern sym var)
+  | Pair (Pattern sym var lvar) (Pattern sym var lvar)
   -- | > Union: recursively match item union
-  | Union (Either (Pattern sym var) (Pattern sym var))
+  | Union (Either (Pattern sym var lvar) (Pattern sym var lvar))
   -- | > Variable: match any item expression and bind it to the given variable
   | Var var
+  -- | > Local variable: local variable used in the `Let` pattern
+  | LVar lvar
   -- | > Any: match any item expression (wildcard)
   | Any
   -- | > Application: apply function to the given argument pattern.
   -- The pattern must be possible to `close`.
-  | App FunName (Pattern sym var)
+  | App FunName (Pattern sym var lvar)
   -- | > Disjunction: match items which match either of the two patterns.
   -- `Or` provides non-determinism in pattern matching.
-  | Or (Pattern sym var) (Pattern sym var)
+  | Or (Pattern sym var lvar) (Pattern sym var lvar)
   -- | > Let: `Let x e y` should be read as ,,let x = e in y'', where:
   -- * `e` is matched with the underlying item
   -- * `x` is matched with the result to bind local variables
   -- * `y` is the result constructed based on the bound local variables
-  | Let (Pattern sym var) (Pattern sym var) (Pattern sym var)
+  | Let (Pattern sym var lvar) (Pattern sym var lvar) (Pattern sym var lvar)
   -- | > Via: `Via p x` should be understood as matching `x` with the
   -- underlying item via `p`:
   -- * `p` is first matched with the underlying item
   -- * `x` is then matched with the result
   -- `Via` is different from `Let` in that variables in `x` are global (i.e.,
   -- with the scope of the rule).  `Via` can be also understood as conjunction.
-  | Via (Pattern sym var) (Pattern sym var)
+  | Via (Pattern sym var lvar) (Pattern sym var lvar)
   -- | > Fix: `Fix p` defines a recursive pattern `p`, which can be referred to
   -- with `Rec` from within `p`
-  | Fix (Pattern sym var)
+  | Fix (Pattern sym var lvar)
   -- | > Rec: call recursive pattern `p` defined with `Fix p`
   | Rec
   deriving (Show, Eq, Ord)
 
 
 -- | Retrieve the set of global variables in the given pattern.
-globalVarsIn :: (Ord var) => Pattern sym var -> Set.Set var
+globalVarsIn :: (Ord var) => Pattern sym var lvar -> Set.Set var
 globalVarsIn = \case
   Const _ -> Set.empty
   Pair p1 p2 -> globalVarsIn p1 <> globalVarsIn p2
@@ -142,6 +145,7 @@ globalVarsIn = \case
     Left p -> globalVarsIn p
     Right p -> globalVarsIn p
   Var v -> Set.singleton v
+  LVar v -> error "globalVarsIn: encountered local variable!"
   Any -> Set.empty
   App _ p -> globalVarsIn p
   -- TODO: should we require that the sets of global variables in the two
@@ -165,40 +169,60 @@ type Env sym var = M.Map var (Item sym)
 
 
 -- | Pattern matching state
-data PMState sym var = PMState
-  { _env :: Env sym var
-    -- ^ Variable binding environment
-  , _fix :: Maybe (Pattern sym var)
+data PMState sym var lvar = PMState
+  { _genv :: Env sym var
+    -- ^ Global variable binding environment
+  , _lenv :: Env sym lvar
+    -- ^ Local variable binding environment
+  , _fix :: Maybe (Pattern sym var lvar)
     -- ^ Fixed recursive pattern
   } deriving (Show)
 $( makeLenses [''PMState] )
 
 
 -- | Pattern matching monad transformer
-type MatchT sym var m a =
-  P.ListT (RWS.RWST (FunSet sym) () (PMState sym var) m) a
+type MatchT sym var lvar m a =
+  P.ListT (RWS.RWST (FunSet sym) () (PMState sym var lvar) m) a
 
 
 -- | Lift the computation in the inner monad to `MatchT`.
-lift :: (Monad m) => m a -> MatchT sym var m a
+lift :: (Monad m) => m a -> MatchT sym var lvar m a
 lift = S.lift . S.lift
 
 
 -- | Run pattern matching computation with the underlying functions and
 -- predicates.
-runMatchT :: (Monad m) => FunSet sym -> MatchT sym var m a -> m ()
+runMatchT
+  :: (Monad m)
+  => FunSet sym
+  -> MatchT sym var lvar m a
+  -> m ()
 runMatchT funSet m =
-  void $ RWS.evalRWST (P.runListT m) funSet (PMState M.empty Nothing)
+  void $ RWS.evalRWST (P.runListT m) funSet (PMState M.empty M.empty Nothing)
 
 
--- | Look up the value assigned to the given variable.
-lookupVar :: (Monad m, Ord var) => var -> MatchT sym var m (Maybe (Item sym))
-lookupVar v = S.gets $ M.lookup v . getL env
+-- | Look up the value assigned to the global variable.
+lookupVar
+  :: (Monad m, Ord var)
+  => var
+  -> MatchT sym var lvar m (Maybe (Item sym))
+lookupVar v = S.gets $ M.lookup v . getL genv
+
+
+-- | Look up the value assigned to the local variable.
+lookupLVar
+  :: (Monad m, Ord lvar)
+  => lvar
+  -> MatchT sym var lvar m (Maybe (Item sym))
+lookupLVar v = S.gets $ M.lookup v . getL lenv
 
 
 -- | Retrieve the value bound to the given variable.
-retrieve :: (Monad m, Ord var) => var -> MatchT sym var m (Item sym)
-retrieve v = 
+retrieveVar
+  :: (Monad m, Ord var)
+  => var
+  -> MatchT sym var lvar m (Item sym)
+retrieveVar v =
   lookupVar v >>= \case
     Nothing -> empty
     Just it -> return it
@@ -206,32 +230,76 @@ retrieve v =
 
 -- | Bind the item to the given variable.  If the variable is already bound,
 -- make sure that the new item is equal to the old one.
-bind :: (Monad m, Eq sym, Ord var) => var -> Item sym -> MatchT sym var m ()
-bind v it = do
-  mayIt <- S.lift $ S.gets (M.lookup v . getL env)
+bindVar
+  :: (Monad m, Eq sym, Ord var)
+  => var
+  -> Item sym
+  -> MatchT sym var lvar m ()
+bindVar v it = do
+  mayIt <- S.lift $ S.gets (M.lookup v . getL genv)
   case mayIt of
-    Nothing -> S.modify' . modL env $ M.insert v it
+    Nothing -> S.modify' . modL genv $ M.insert v it
     Just it' -> guard $ it == it'
 
 
+-- | Bind the item to the given local variable.
+bindLVar
+  :: (Monad m, Eq sym, Ord lvar)
+  => lvar
+  -> Item sym
+  -> MatchT sym var lvar m ()
+bindLVar v it = S.modify' . modL lenv $ M.insert v it
+
+
+-- -- | Perform matching in a local global environment.  TODO: temporary function,
+-- -- refactor and remove!
+-- withLocalGlobalEnv :: (P.MonadIO m) => MatchT sym var lvar m a -> MatchT sym var lvar m a
+-- withLocalGlobalEnv m = do
+--   ge <- S.gets (getL genv)
+--   le <- S.gets (getL lenv)
+--   x <- m
+--   S.modify' (setL genv ge)
+--   S.modify' (setL lenv le)
+--   return x
+
+
+-- -- | Perform matching in a local environment.
+-- withLocalEnv :: (P.MonadIO m) => MatchT sym var lvar m a -> MatchT sym var lvar m a
+-- withLocalEnv m = do
+--   -- TODO: Does this actually work in general?  What if `m` fails?  Then
+--   -- environment is not restored.  This can be a serious problem, since we want
+--   -- to allow disjunctive (`Or`) patterns.
+--   e <- S.gets (getL lenv)
+--   x <- m
+--   S.modify' (setL lenv e)
+--   return x
+
+
 -- | Perform matching in a local environment.
-withLocalEnv :: (Monad m) => MatchT sym var m a -> MatchT sym var m a
+withLocalEnv
+  :: (P.MonadIO m)
+  => MatchT sym var lvar m a
+  -> MatchT sym var lvar m a
 withLocalEnv m = do
-  -- TODO: Does this actually work in general?  What if `m` fails?  Then
-  -- environment is not restored.  This can be a serious problem, since we want
-  -- to allow disjunctive (`Or`) patterns.
-  e <- S.gets (getL env)
-  x <- m
-  S.modify' (setL env e)
-  return x
+  e <- S.gets (getL lenv)
+  mark <- (`mod` 1000) <$> P.liftIO (R.randomIO :: IO Int)
+  P.liftIO $ do
+    putStr ">>> IN: "
+    print mark
+  m <|> do
+    S.modify' (setL lenv e)
+    P.liftIO $ do
+      putStr "<<< OUT: "
+      print mark
+    empty
 
 
 -- | Perform match with the recursive pattern.
 withFix
   :: (Monad m)
-  => Pattern sym var
-  -> MatchT sym var m a
-  -> MatchT sym var m a
+  => Pattern sym var lvar
+  -> MatchT sym var lvar m a
+  -> MatchT sym var lvar m a
 withFix p m = do
   -- Retrieve the old fix
   oldFix <- S.lift . S.gets $ getL fix
@@ -247,7 +315,7 @@ withFix p m = do
 
 
 -- | Retrieve the fixed recursive pattern.
-fixed :: (Monad m) => MatchT sym var m (Pattern sym var)
+fixed :: (Monad m) => MatchT sym var lvar m (Pattern sym var lvar)
 fixed = do
   mayFix <- S.lift . S.gets $ getL fix
   case mayFix of
@@ -259,7 +327,10 @@ fixed = do
 -- must exist, otherwise `retrievePred` thorws an error (alternatively, the
 -- pattern match could simplify fail, but that could lead to hard-to-find
 -- errors in deduction rules).
-retrievePred :: (Monad m) => PredName -> MatchT sym var m (Item sym -> Bool)
+retrievePred
+  :: (Monad m)
+  => PredName
+  -> MatchT sym var lvar m (Item sym -> Bool)
 retrievePred predName = do
   mayFun <- RWS.asks (M.lookup predName . predMap)
   case mayFun of
@@ -273,7 +344,10 @@ retrievePred predName = do
 
 -- | Retrieve the symbol-level function with the given name.  The function with
 -- the name must exist, otherwise `retrieveFun` thorws an error.
-retrieveFun :: (Monad m) => FunName -> MatchT sym var m (Item sym -> Item sym)
+retrieveFun
+  :: (Monad m)
+  => FunName
+  -> MatchT sym var lvar m (Item sym -> Item sym)
 retrieveFun funName = do
   mayFun <- RWS.asks (M.lookup funName . funMap)
   case mayFun of
@@ -290,10 +364,10 @@ retrieveFun funName = do
 -- expression, which is not necessarily the same as the input item due to the
 -- `Let` pattern construction, which allows to change the matching result.
 match
-  :: (Monad m, Show sym, Show var, Eq sym, Ord var)
-  => Pattern sym var
+  :: (P.MonadIO m, Show sym, Show var, Show lvar, Eq sym, Ord var, Ord lvar)
+  => Pattern sym var lvar
   -> Item sym
-  -> MatchT sym var m (Item sym)
+  -> MatchT sym var lvar m (Item sym)
 match pt it =
   case (pt, it) of
     (Const it', it) -> do
@@ -310,7 +384,10 @@ match pt it =
         -- Fail otherwise
         _ -> empty
     (Var x, _) -> do
-      bind x it
+      bindVar x it
+      return it
+    (LVar x, _) -> do
+      bindLVar x it
       return it
     (Any, _) ->
       return it
@@ -359,11 +436,11 @@ match pt it =
 -- and (b) binds them to unit values.
 dummyMatch
   :: (Monad m, Eq sym, Ord var)
-  => Pattern sym var
-  -> MatchT sym var m ()
+  => Pattern sym var lvar
+  -> MatchT sym var lvar m ()
 dummyMatch p = do
   mapM_
-    (flip bind I.Unit)
+    (flip bindVar I.Unit)
     (Set.toList $ globalVarsIn p)
 
 
@@ -379,9 +456,9 @@ dummyMatch p = do
 -- * `Via` pattern
 -- * recursive pattern (`Fix` / `Rec`)
 close
-  :: (Monad m, Eq sym, Ord var, Show sym, Show var)
-  => Pattern sym var
-  -> MatchT sym var m (Item sym)
+  :: (P.MonadIO m, Eq sym, Ord var, Ord lvar, Show sym, Show var, Show lvar)
+  => Pattern sym var lvar
+  -> MatchT sym var lvar m (Item sym)
 close = \case
   Const it -> pure it
   Pair p1 p2 -> I.Pair <$> close p1 <*> close p2
@@ -390,7 +467,11 @@ close = \case
       Left lp  -> I.Union .  Left <$> close lp
       Right rp -> I.Union . Right <$> close rp
   -- Fail if variable x not bound
-  Var v -> retrieve v
+  Var v -> retrieveVar v
+  LVar v ->
+    lookupLVar v >>= \case
+      Nothing -> empty
+      Just it -> pure it
   -- Fail in case of a wildcard pattern
   Any -> empty
   App fname p -> do
@@ -432,18 +513,18 @@ close = \case
 -- You should think of side conditions as additional checks verified once the
 -- antecedent patterns are matched.
 --
-data Cond sym var
+data Cond sym var lvar
   -- | > Check the equality between the two patterns
-  = Eq (Pattern sym var) (Pattern sym var)
+  = Eq (Pattern sym var lvar) (Pattern sym var lvar)
   -- | > Check if the given predicate is satisfied
-  -- | Pred PredName (Pattern sym var)
-  | Pred PredName (Pattern sym var)
+  -- | Pred PredName (Pattern sym var lvar)
+  | Pred PredName (Pattern sym var lvar)
   -- | > Logical conjunction
-  | And (Cond sym var) (Cond sym var)
+  | And (Cond sym var lvar) (Cond sym var lvar)
   -- | > Logical disjunction
-  | OrC (Cond sym var) (Cond sym var)
+  | OrC (Cond sym var lvar) (Cond sym var lvar)
   -- | > Logical negation
-  | Neg (Cond sym var)
+  | Neg (Cond sym var lvar)
   -- | > Always True
   | TrueC
   deriving (Show, Eq, Ord)
@@ -452,9 +533,9 @@ data Cond sym var
 -- | Check the side condition expression.  Note that `check` does not modify
 -- the `Env`ironment.  We keep it in the `MatchT` monad for simplicity.
 check
-  :: (Monad m, Eq sym, Ord var, Show sym, Show var)
-  => Cond sym var
-  -> MatchT sym var m Bool
+  :: (P.MonadIO m, Eq sym, Ord var, Ord lvar, Show sym, Show var, Show lvar)
+  => Cond sym var lvar
+  -> MatchT sym var lvar m Bool
 check cond =
   case cond of
     Eq px py  -> (==) <$> close px <*> close py
@@ -472,12 +553,12 @@ check cond =
 
 -- | Lock determines the index, i.e., the set of pattern keys handled by a
 -- given indexing structure.
-type Lock sym var = Pattern sym var
+type Lock sym var lvar = Pattern sym var lvar
 
 
 -- | Key of a pattern assigns values to the individual variables in the
--- corresponding lock.  It is important to note that each key has its
--- corresponding lock (makes sense!).
+-- corresponding lock.  Each key has its corresponding lock (makes sense,
+-- right?).
 type Key sym var = Env sym var
 
 
@@ -490,14 +571,14 @@ type Key sym var = Env sym var
 -- TODO: In `Let x e y`, both `x` and `y` should contain no global variables.
 -- However, this is currently not enforced in any way.
 --
--- TODO: We should also rename bound variables, so that it's insensitive to
--- variable names.  (UPDATE: this is not necessarily the best idea, currently
--- we rely on the fact that variables are not renamed).
+-- TODO: We could also rename bound variables, so that the lock is insensitive
+-- to variable names.  (UPDATE: this is not necessarily the best idea,
+-- currently we rely on the fact that variables are not renamed).
 --
 mkLock
   :: (Monad m, Ord var)
-  => Pattern sym var
-  -> MatchT sym var m (Lock sym var)
+  => Pattern sym var lvar
+  -> MatchT sym var lvar m (Lock sym var lvar)
 mkLock = \case
   Const x -> pure $ Const x
   Pair x y -> Pair <$> mkLock x <*> mkLock y
@@ -508,6 +589,7 @@ mkLock = \case
     lookupVar v >>= \case
       Just it -> pure $ Var v
       Nothing -> pure Any
+  LVar v -> error "mkLock LVar: not sure what to do here yet"
   Any -> pure Any
   App fname p -> App fname <$> mkLock p
   Or x y -> Or <$> mkLock x <*> mkLock y
@@ -517,22 +599,40 @@ mkLock = \case
   Rec -> pure Rec
 
 
+-- -- | Retrieve the key(s) of the item for the given lock.
+-- --
+-- -- TODO: the function must be evaluated in a fresh environment.
+-- -- TODO: `withLocalGlobalEnv` is not effective if the match fails!
+-- --
+-- itemKeyFor
+--   :: (P.MonadIO m, Eq sym, Ord var, Ord lvar, Show sym, Show var, Show lvar)
+--   => I.Item sym
+--   -> Lock sym var lvar
+--   -> MatchT sym var lvar m (Key sym var)
+-- itemKeyFor x lock = withLocalGlobalEnv $ do
+--   -- TODO: Since we ignore the item below (result of the match), it may be that
+--   -- we will generate several keys which are identical.  This might be a
+--   -- problem?  At least from the efficiency point of view.
+--   _ <- match lock x
+--   S.gets (getL genv)
+
+
 -- | Retrieve the key(s) of the item for the given lock.
---
--- TODO: the function must be evaluated in a fresh environment.
--- TODO: `withLocalEnv` is not effective if the match fails!
---
 itemKeyFor
-  :: (P.MonadIO m, Eq sym, Ord var, Show sym, Show var)
-  => I.Item sym
-  -> Lock sym var
-  -> MatchT sym var m (Key sym var)
-itemKeyFor x lock = withLocalEnv $ do
-  -- TODO: Since we ignore the item below (result of the match), it may be that
-  -- we will generate several keys which are identical.  This might be a
-  -- problem?  At least from the efficiency point of view.
-  _ <- match lock x
-  S.gets (getL env)
+  :: (P.MonadIO m, Eq sym, Ord var, Ord lvar, Show sym, Show var, Show lvar)
+  => FunSet sym
+  -> I.Item sym
+  -> Lock sym var lvar
+  -> (Key sym var -> m ()) -- ^ Monadic key handler
+  -> m ()
+itemKeyFor funSet item lock handler = do
+  runMatchT funSet $ do
+    -- TODO: Since we ignore the item below (result of the match), it may be that
+    -- we will generate several keys which are identical.  This might be a
+    -- problem?  At least from the efficiency point of view.
+    _ <- match lock item
+    key <- S.gets (getL genv)
+    lift $ handler key
 
 
 -- | Retrieve the values of the global variables in the lock, thus creating the
@@ -543,11 +643,11 @@ itemKeyFor x lock = withLocalEnv $ do
 --
 keyFor
   :: (Monad m, Ord var)
-  => Lock sym var
-  -> MatchT sym var m (Key sym var)
+  => Lock sym var lvar
+  -> MatchT sym var lvar m (Key sym var)
 keyFor lock = do
   M.fromList <$> mapM
-    (\v -> (v,) <$> retrieve v)
+    (\v -> (v,) <$> retrieveVar v)
     (Set.toList $ globalVarsIn lock)
 
 
@@ -579,12 +679,12 @@ keyFor lock = do
 
 
 -- | Single deduction rule
-data Rule sym var = Rule
-  { antecedents :: [Pattern sym var]
+data Rule sym var lvar = Rule
+  { antecedents :: [Pattern sym var lvar]
     -- ^ The list of rule's antecedents
-  , consequent :: Pattern sym var
+  , consequent :: Pattern sym var lvar
     -- ^ The rule's consequent
-  , condition :: Cond sym var
+  , condition :: Cond sym var lvar
   }
   deriving (Show, Eq, Ord)
 
@@ -596,11 +696,11 @@ data Rule sym var = Rule
 -- permutations when matching them with the `antecedents`.
 --
 apply
-  :: (Monad m, Show sym, Show var, Eq sym, Ord var)
+  :: (P.MonadIO m, Eq sym, Ord var, Ord lvar, Show sym, Show var, Show lvar)
   -- => Grammar sym
-  => Rule sym var
+  => Rule sym var lvar
   -> [Item sym]
-  -> MatchT sym var m (Item sym)
+  -> MatchT sym var lvar m (Item sym)
 apply Rule{..} items = do
   guard $ length antecedents == length items
   -- Match antecedents with the corresponding items

@@ -104,12 +104,12 @@ inject x (x' : xs) =
 
 -- | Perform chart parsing with the given grammar and deduction rules.
 chartParse
-  :: (Show sym, Show var, Ord sym, Ord var)
+  :: (Show sym, Show var, Show lvar, Ord sym, Ord var, Ord lvar)
   => P.FunSet sym
     -- ^ Set of registered functions
   -> S.Set (I.Item sym)
     -- ^ Axiom-generated items
-  -> M.Map T.Text (P.Rule sym var)
+  -> M.Map T.Text (P.Rule sym var lvar)
     -- ^ Deduction rules (named)
   -> (I.Item sym -> Bool)
     -- ^ Is the item final?
