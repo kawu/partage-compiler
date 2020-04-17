@@ -15,21 +15,26 @@ module ParComp.Pattern
   , FunName (..)
   , emptyFunSet
 
-  -- * Patterns and rules
+  -- * Pattern
   , Pattern (..)
-  , Cond (..)
-  , Rule (..)
+
+  -- ** Matching
   , MatchT
   , lift
-  , apply
-  , runMatchT
-  , dummyMatch
-  , match
-  , check
-  , close
   , forEach
+  , runMatchT
+  , match
+  , close
 
-  -- * Indexing
+  -- * Condition
+  , Cond (..)
+  , check
+
+  -- * Rule
+  , Rule (..)
+  , apply
+
+  -- * Indexing (locks and keys)
   , Lock
   , Key
   , mkLock
@@ -165,7 +170,7 @@ globalVarsIn = \case
 
 
 --------------------------------------------------
--- Pattern matching
+-- Pattern matching core
 --------------------------------------------------
 
 
@@ -193,6 +198,23 @@ type MatchT sym var lvar m a =
 -- | Lift the computation in the inner monad to `MatchT`.
 lift :: (Monad m) => m a -> MatchT sym var lvar m a
 lift = S.lift . S.lift
+
+
+-- | Perform the matching computation for each element in the list.  Start each
+-- matching from the current state (so that matching computations the
+-- individual elements are independent).
+forEach
+  :: (Monad m)
+  => [a]
+  -> (a -> MatchT sym var lvar m b)
+  -> MatchT sym var lvar m b
+forEach xs m = do
+  state <- S.get
+  choice $ do
+    x <- xs
+    return $ do
+      S.put state
+      m x
 
 
 -- | Run pattern matching computation with the underlying functions and
@@ -339,20 +361,9 @@ retrieveFun funName = do
     Just fun -> return fun
 
 
--- | Perform the matching computation for each element in the list.  Start each
--- matching from a fresh state.
-forEach
-  :: (Monad m)
-  => [a]
-  -> (a -> MatchT sym var lvar m b)
-  -> MatchT sym var lvar m b
-forEach xs m = do
-  state <- S.get
-  choice $ do
-    x <- xs
-    return $ do
-      S.put state
-      m x
+--------------------------------------------------
+-- Pattern matching
+--------------------------------------------------
 
 
 -- | Match the given pattern with the given item expression and bind item
@@ -396,8 +407,8 @@ match pt it =
       -- NOTE: we retrieve and then restore the entire state, even though the
       -- fixed recursive pattern should never escape its syntactic scope so, in
       -- theory, it should not change between the first and the second branch
-      -- of the `Or` pattern.  Perhaps this is something we could check
-      -- dynamically, just in case?
+      -- of the `Or` pattern.  The same applies to local variables.  Perhaps
+      -- this is something we could check dynamically, just in case?
       state <- S.get
       match p1 it <|> do
         S.put state
@@ -443,14 +454,13 @@ dummyMatch p = do
 
 -- | Convert the pattern to the corresponding item expression.  This is only
 -- possible if the pattern contains no free variables nor wildcard patterns.
--- Otherwise, `close` will silently fail.
 --
 -- Note that `close` should not modify the underlying state/environment.
 --
--- The behavior of the function is undefined in case the pattern contains any
--- of the following:
--- * `Via` pattern
--- * recursive pattern (`Fix` / `Rec`)
+-- The behavior of the function is undefined for patterns containing any of the
+-- following:
+-- * `Via` patterns
+-- * recursive patterns (`Fix` / `Rec`)
 close
   :: (P.MonadIO m, Eq sym, Ord var, Ord lvar, Show sym, Show var, Show lvar)
   => Pattern sym var lvar
@@ -511,14 +521,13 @@ close = \case
 --
 -- Note that a side condition must contain no free variables, nor wildcard
 -- patterns.  This is because side conditions are not matched against items.
--- You should think of side conditions as additional checks verified once the
+-- You can think of side conditions as additional checks verified once the
 -- antecedent patterns are matched.
 --
 data Cond sym var lvar
-  -- | > Check the equality between the two patterns
+  -- | > Check the equality between two patterns
   = Eq (Pattern sym var lvar) (Pattern sym var lvar)
   -- | > Check if the given predicate is satisfied
-  -- | Pred PredName (Pattern sym var lvar)
   | Pred PredName (Pattern sym var lvar)
   -- | > Logical conjunction
   | And (Cond sym var lvar) (Cond sym var lvar)
@@ -552,14 +561,15 @@ check cond =
 --------------------------------------------------
 
 
--- | Lock determines the index, i.e., the set of pattern keys handled by a
--- given indexing structure.
+-- | Lock determines an indexing structure.
+--
+-- Each `I.Item` (`Pattern`) can be matched with the `Lock` to produce the
+-- corresponding `Key`(s).  These keys then allow to find the item (pattern) in
+-- the index corresponding to the lock.
 type Lock sym var lvar = Pattern sym var lvar
 
 
--- | Key of a pattern assigns values to the individual variables in the
--- corresponding lock.  Each key has its corresponding lock (makes sense,
--- right?).
+-- | Key assigns values to the (global) variables in the corresponding lock.
 type Key sym var = Env sym var
 
 
@@ -673,28 +683,6 @@ keyFor lock = do
   M.fromList <$> mapM
     (\v -> (v,) <$> retrieveVar v)
     (Set.toList $ globalVarsIn lock)
-
-
--- -- | Replace bound variables with their corresponding values and free variables
--- -- with wildcards (with the exception of local variables, which are not
--- -- handled).
--- bindAll = \case
---   Const x -> pure $ Const x
---   Pair x y -> Pair <$> bindAll x <*> bindAll y
---   Union up -> case up of
---     Left lp  -> Union .  Left <$> bindAll lp
---     Right rp -> Union . Right <$> bindAll rp
---   Var v ->
---     lookupVar v >>= \case
---       Just it -> pure $ Const it
---       Nothing -> pure Any
---   Any -> pure Any
---   App fname p -> App fname <$> bindAll p
---   Or x y -> Or <$> bindAll x <*> bindAll y
---   Let x e y -> Let <$> pure x <*> bindAll e <*> pure y
---   Via p x -> Via <$> bindAll p <*> bindAll x
---   Fix p -> Fix <$> bindAll p
---   Rec -> pure Rec
 
 
 --------------------------------------------------
