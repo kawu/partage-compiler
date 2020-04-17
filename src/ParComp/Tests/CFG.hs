@@ -250,9 +250,12 @@ cfgFunSet = P.emptyFunSet
 testCFG :: IO ()
 testCFG = do
   let cfgRules = S.fromList
-        [ ("NP", ["DET", "N"])
+        [ ("NP", ["N"])
+        , ("NP", ["DET", "N"])
         , ("S", ["NP", "VP"])
         , ("VP", ["V"])
+        , ("VP", ["V", "Adv"])
+        , ("VP", ["Adv", "V"])
         , ("VP", ["Adv", "V", "NP"])
         , ("DET", ["a"])
         , ("DET", ["some"])

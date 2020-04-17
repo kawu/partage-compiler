@@ -24,11 +24,17 @@ module ParComp.Pattern
   , apply
   , runMatchT
   , dummyMatch
+  , match
+  , check
+  , close
+  , withLocalEnv
 
   -- * Indexing
   , Lock
   , Key
   , mkLock
+  , itemKeyFor
+  , keyFor
   ) where
 
 
@@ -199,9 +205,12 @@ bind v it = do
 -- | Perform matching in a local environment.
 withLocalEnv :: (Monad m) => MatchT sym var m a -> MatchT sym var m a
 withLocalEnv m = do
-  env <- S.get
+  -- TODO: Does this actually work in general?  What if `m` fails?  Then
+  -- environment is not restored.  This can be a serious problem, since we want
+  -- to allow disjunctive (`Or`) patterns.
+  e <- S.gets (getL env)
   x <- m
-  S.put env
+  S.modify' (setL env e)
   return x
 
 
@@ -318,9 +327,11 @@ match pt it =
       guard $ it' == it
       return it
     (Or p1 p2, it) -> do
-      env <- S.get
+      -- TODO: do we want to restore the entire state, or just the environment?
+      -- Currently we do the former.
+      state <- S.get
       match p1 it <|> do
-        S.put env
+        S.put state
         match p2 it
 --     (Or p1 p2, it) -> do
 --       env <- S.get
@@ -361,7 +372,7 @@ match pt it =
 -- variables in the pattern and work with this?
 --
 dummyMatch
-  :: (Monad m, Show sym, Show var, Eq sym, Ord var)
+  :: (Monad m, Eq sym, Ord var)
   => Pattern sym var
   -> MatchT sym var m ()
 dummyMatch p = do
@@ -494,7 +505,8 @@ type Key sym var = Env sym var
 -- However, this is currently not enforced in any way.
 --
 -- TODO: We should also rename bound variables, so that it's insensitive to
--- variable names.
+-- variable names.  (UPDATE: this is not necessarily the best idea, currently
+-- we rely on the fact that variables are not renamed).
 --
 mkLock
   :: (Monad m, Ord var)
@@ -521,18 +533,18 @@ mkLock = \case
 
 -- | Retrieve the key(s) of the item for the given lock.
 --
--- TODO: the function must be evaluated in an empty environment, otherwise it
--- will return more than we want.
+-- TODO: the function must be evaluated in a fresh environment.
+-- TODO: `withLocalEnv` is not effective if the match fails!
 --
 itemKeyFor
-  :: (Monad m, Eq sym, Ord var, Show sym, Show var)
+  :: (P.MonadIO m, Eq sym, Ord var, Show sym, Show var)
   => I.Item sym
   -> Lock sym var
   -> MatchT sym var m (Key sym var)
-itemKeyFor x lock = do
-  -- TODO: Since we ignore the item, it may be that we will generate several
-  -- keys which are identical.  This might be a problem?  At least from the
-  -- efficiency point of view.
+itemKeyFor x lock = withLocalEnv $ do
+  -- TODO: Since we ignore the item below (result of the match), it may be that
+  -- we will generate several keys which are identical.  This might be a
+  -- problem?  At least from the efficiency point of view.
   _ <- match lock x
   S.gets (getL env)
 
@@ -540,7 +552,7 @@ itemKeyFor x lock = do
 -- | Retrieve the values of the global variables in the lock, thus creating the
 -- key corresponding to the lock based on the current environment.
 --
--- TODO: in contrast with `itemKeyFor`, `keyFor` relies on the current
+-- NOTE: in contrast with `itemKeyFor`, `keyFor` relies on the current
 -- environment.
 --
 keyFor

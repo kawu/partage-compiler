@@ -12,13 +12,16 @@ module ParComp.Parser
   ) where
 
 
-import           Control.Monad (forM_)
+import           Control.Monad (forM_, guard, unless)
 import qualified Control.Monad.State.Strict as ST
+import           Control.Applicative (Alternative, (<|>), empty)
 
 import qualified Pipes as Pipes
+import           Pipes (MonadIO)
 
 import           Data.Lens.Light
 
+import           Data.Maybe (maybeToList)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Map.Strict as M
@@ -32,6 +35,12 @@ import           ParComp.Pattern (Pattern(..))
 --------------------------------------------------
 -- Utils
 --------------------------------------------------
+
+
+-- | @choice ps@ tries to apply the actions in the list @ps@ in order, until
+-- one of them succeeds. Returns the value of the succeeding action.
+choice :: Alternative f => [f a] -> f a
+choice = foldr (<|>) empty
 
 
 -- | Return subsets of the given size
@@ -115,15 +124,38 @@ popFromAgenda = do
 
 -- | Remove an item from agenda.
 addToAgenda :: (Monad m, Ord sym) => I.Item sym -> ChartT sym var m ()
-addToAgenda x = ST.modify' $ modL' agenda (S.insert x)
+addToAgenda x = do
+  state <- ST.get
+  let ag = getL agenda state
+      ch = getL chart state
+  unless (S.member x ag || S.member x ch) $ do
+    ST.modify' $ setL agenda (S.insert x ag)
 
 
 -- | Add an item to a chart (also put it in the corresponding indexing
 -- structures).
-addToChart :: (Monad m, Ord sym) => I.Item sym -> ChartT sym var m ()
-addToChart x = do
+addToChart
+  :: (MonadIO m, Ord sym, Ord var, Show sym, Show var)
+  => P.FunSet sym
+    -- ^ Set of registered functions
+  -> I.Item sym
+  -> ChartT sym var m ()
+addToChart funSet x = do
+--   ST.liftIO $ do
+--     T.putStr ">>> Item: "
+--     print x
   ST.modify' $ modL' chart (S.insert x)
-  -- TODO: put the item in the corresponding indexing structures
+  locks <- ST.gets $ M.keys . getL indexMap
+  forM_ locks $ \lock -> do
+--     ST.liftIO $ do
+--       T.putStr ">>> Lock: "
+--       print lock
+    P.runMatchT funSet $ do
+      key <- P.itemKeyFor x lock
+--       ST.liftIO $ do
+--         T.putStr ">>> Key: "
+--         print key
+      P.lift $ saveKey lock key x
 
 
 -- | Retrieve the chart subsets of the given length
@@ -142,6 +174,30 @@ registerLock lock =
   ST.modify' $ modL' indexMap (M.insert lock M.empty)
 
 
+-- | Save key for the given lock, together with the corresponding item.
+saveKey
+  :: (Monad m, Ord sym, Ord var)
+  => P.Lock sym var
+  -> P.Key sym var
+  -> I.Item sym
+  -> ChartT sym var m ()
+saveKey lock key item = ST.modify'
+  . modL' indexMap
+  $ M.insertWith
+      (M.unionWith S.union)
+      lock
+      (M.singleton key (S.singleton item))
+
+
+-- | Retrieve the index with the given lock.
+retrieveIndex
+  :: (Monad m, Ord sym, Ord var)
+  => P.Lock sym var
+  -> ChartT sym var m (Index sym var)
+retrieveIndex lock =
+  ST.gets $ maybe M.empty id . M.lookup lock . getL indexMap
+
+
 --------------------------------------------------
 -- Indexing
 --------------------------------------------------
@@ -149,21 +205,89 @@ registerLock lock =
 
 -- | Generate all the locks for the given rule.
 --
--- TODO: Should be performed in an empty environment?
+-- TODO: Should be performed in a fresh environment?
 --
 locksFor
-  -- TODO: trim down the list of class requirements
-  :: (Monad m, Show sym, Show var, Eq sym, Ord var)
+  :: (Monad m, Eq sym, Ord var)
   => P.Rule sym var
   -> P.MatchT sym var m (P.Lock sym var)
-locksFor rule = do
+locksFor rule = P.withLocalEnv $ do
   (main, rest) <- each $ pickOne (P.antecedents rule)
   P.dummyMatch main
   case rest of
     [other] -> P.mkLock other
-    _ -> error "locksFor: doesn't handle non-binary rules yet"
+    _ -> error "locksFor: doesn't handle non-binary rules"
   where
     each = Pipes.Select . Pipes.each
+
+
+-- | Perform the matching computation for each element in the list.  Start each
+-- matching from a fresh state.
+forEach
+  :: (Monad m)
+  => [a]
+  -> (a -> P.MatchT sym var m b)
+  -> P.MatchT sym var m b
+forEach xs m = do
+  state <- ST.get
+  choice $ do
+    x <- xs
+    return $ do
+      ST.put state
+      m x
+
+
+-- | Apply rule.
+applyRule
+  :: (MonadIO m, Show sym, Show var, Ord sym, Ord var)
+  => T.Text
+  -> P.Rule sym var
+  -> I.Item sym
+  -> P.MatchT sym var (ChartT sym var m) (I.Item sym)
+applyRule ruleName rule mainItem = do
+  -- For each split into the main pattern and the remaining patterns
+  forEach (pickOne $ P.antecedents rule) $ \(mainPatt, restPatt) -> do
+    P.match mainPatt mainItem
+    case restPatt of
+      [otherPatt] -> do
+        lock <- P.mkLock otherPatt
+--         ST.liftIO $ do
+--           T.putStr "@@@ Lock: "
+--           print lock
+        index <- P.lift $ retrieveIndex lock
+--         ST.liftIO $ do
+--           T.putStr "@@@ Index: "
+--           print index
+        key <- P.keyFor lock
+--         ST.liftIO $ do
+--           T.putStr "@@@ Key: "
+--           print key
+        let otherItems =
+              maybe [] S.toList $ M.lookup key index
+        forEach otherItems $ \otherItem -> do
+--           ST.liftIO $ do
+--             T.putStr "@@@ Other: "
+--             print otherItem
+          P.match otherPatt otherItem
+--           ST.liftIO $ do
+--             T.putStrLn "@@@ Matched with Other"
+          P.check (P.condition rule) >>= guard
+--           ST.liftIO $ do
+--             T.putStrLn "@@@ Conditions checked"
+          result <- P.close (P.consequent rule)
+          -- We managed to apply a rule!
+--           ST.liftIO $ do
+--             T.putStr "@@@ "
+--             T.putStr ruleName
+--             T.putStr ": "
+--             putStr $ show [mainItem, otherItem]
+--             T.putStr " => "
+--             print result
+          -- Return the result
+          return result
+      _ -> error "applyRule: doesn't handle non-binary rules"
+
+    -- each = Pipes.Select . Pipes.each
 
 
 --------------------------------------------------
@@ -189,13 +313,13 @@ chartParse funSet baseItems ruleMap isFinal =
     -- Register all the locks
     P.runMatchT funSet $ do
       rule <- each $ M.elems ruleMap
-      ST.liftIO $ do
-        T.putStr "# Rule: "
-        print rule
+--       ST.liftIO $ do
+--         T.putStr "# Rule: "
+--         print rule
       lock <- locksFor rule
-      ST.liftIO $ do
-        T.putStr "# Lock: "
-        print lock
+--       ST.liftIO $ do
+--         T.putStr "# Lock: "
+--         print lock
       P.lift $ registerLock lock
 
     -- Put all base items to agenda
@@ -214,43 +338,23 @@ chartParse funSet baseItems ruleMap isFinal =
         Nothing -> return Nothing
         Just item -> if isFinal item
           then do
-            addToChart item
+            addToChart funSet item
             return $ Just item
           else do
             handleItem item
-            addToChart item
+            addToChart funSet item
             processAgenda
 
     -- Try to match the given item with other items already in the chart
     handleItem item = do
 --       ST.liftIO $ do
---         T.putStr "# Poped: "
+--         T.putStr "### Popped: "
 --         print item
       -- For each deduction rule
       forM_ (M.toList ruleMap) $ \(ruleName, rule) -> do
 --         ST.liftIO $ do
 --           T.putStr "# Rule: "
 --           T.putStrLn ruleName
-        -- For each chart subset
-        subs <- chartSubsets $ length (P.antecedents rule) - 1
---         ST.liftIO $ do
---           T.putStr "# Subset: "
---           print subs
-        forM_ subs $ \items -> do
-          -- For each possibly way of injecting the current item among
-          -- the items in the subset
-          forM_ (inject item items) $ \items' -> do
---             ST.liftIO $ do
---               T.putStr "# Matching: "
---               print items'
-            P.runMatchT funSet $ do
-              result <- P.apply rule items'
-              P.lift $ addToAgenda result
-              -- We managed to apply a rule!
---               ST.liftIO $ do
---                 T.putStr "# "
---                 T.putStr ruleName
---                 T.putStr ": "
---                 putStr $ show items'
---                 T.putStr " => "
---                 print result
+        P.runMatchT funSet $ do
+          result <- applyRule ruleName rule item
+          P.lift $ addToAgenda result
