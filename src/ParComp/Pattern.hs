@@ -56,11 +56,9 @@ import           Data.Maybe (isJust)
 import qualified ParComp.Item as I
 import           ParComp.Item (Item)
 
-import           Debug.Trace (trace)
-
 
 --------------------------------------------------
--- Function Set
+-- Function register
 --------------------------------------------------
 
 
@@ -74,10 +72,10 @@ newtype PredName = PredName {unPredName :: T.Text}
   deriving (Show, Eq, Ord)
 
 
--- | Registered grammar functions
+-- | Record with registered grammar functions
 --
--- Note that the registered functions are can be in fact multi-argument, since
--- `Item` allows to encode tuples.
+-- Note that the registered functions can be multi-argument, since `Item`
+-- allows to encode tuples.
 --
 data FunSet sym = FunSet
   { predMap :: M.Map PredName (Item sym -> Bool)
@@ -115,9 +113,6 @@ data Pattern sym var
   -- | > Disjunction: match items which match either of the two patterns.
   -- `Or` provides non-determinism in pattern matching.
   | Or (Pattern sym var) (Pattern sym var)
---   -- | > Conjunction: match both patterns against the same item (provided for
---   -- symmetry with `Or`)
---   | AndP (Pattern sym var) (Pattern sym var)
   -- | > Let: `Let x e y` should be read as ,,let x = e in y'', where:
   -- * `e` is matched with the underlying item
   -- * `x` is matched with the result to bind local variables
@@ -138,6 +133,33 @@ data Pattern sym var
   deriving (Show, Eq, Ord)
 
 
+-- | Retrieve the set of global variables in the given pattern.
+globalVarsIn :: (Ord var) => Pattern sym var -> Set.Set var
+globalVarsIn = \case
+  Const _ -> Set.empty
+  Pair p1 p2 -> globalVarsIn p1 <> globalVarsIn p2
+  Union up -> case up of
+    Left p -> globalVarsIn p
+    Right p -> globalVarsIn p
+  Var v -> Set.singleton v
+  Any -> Set.empty
+  App _ p -> globalVarsIn p
+  -- TODO: should we require that the sets of global variables in the two
+  -- branches of the `Or` pattern are the same?  Otherwise, `keyFor` may not
+  -- work (given that ultimately we match either the left or the right branch).
+  Or x y -> globalVarsIn x <> globalVarsIn y
+  -- Below, ignore `x` and `y`, which should contain local variables only
+  Let x e y -> globalVarsIn e
+  Via p x -> globalVarsIn p <> globalVarsIn x
+  Fix p -> globalVarsIn p
+  Rec -> Set.empty
+
+
+--------------------------------------------------
+-- Pattern matching
+--------------------------------------------------
+
+
 -- | Variable binding environment
 type Env sym var = M.Map var (Item sym)
 
@@ -152,29 +174,19 @@ data PMState sym var = PMState
 $( makeLenses [''PMState] )
 
 
--- | Pattern matching monad
+-- | Pattern matching monad transformer
 type MatchT sym var m a =
   P.ListT (RWS.RWST (FunSet sym) () (PMState sym var) m) a
--- type MatchM sym var a = MaybeT (RWS.RWS (Grammar sym) () (Env sym var)) a
 
 
--- | Evaluate pattern matching.
--- evalMatch :: MatchM sym var a -> Maybe (a, Env sym var)
--- evalMatch m =
---   let (val, env) = S.runState (runMaybeT m) M.empty
---    in case val of
---         Nothing -> Nothing
---         Just x  -> Just (x, env)
-
-
--- | Lift computation to the inner monad.
+-- | Lift the computation in the inner monad to `MatchT`.
 lift :: (Monad m) => m a -> MatchT sym var m a
 lift = S.lift . S.lift
 
 
--- | Evaluate pattern matching.
+-- | Run pattern matching computation with the underlying functions and
+-- predicates.
 runMatchT :: (Monad m) => FunSet sym -> MatchT sym var m a -> m ()
--- runMatchT = flip S.evalStateT M.empty . P.runListT
 runMatchT funSet m =
   void $ RWS.evalRWST (P.runListT m) funSet (PMState M.empty Nothing)
 
@@ -184,7 +196,7 @@ lookupVar :: (Monad m, Ord var) => var -> MatchT sym var m (Maybe (Item sym))
 lookupVar v = S.gets $ M.lookup v . getL env
 
 
--- | Retrieve the item expression bound to the given variable.
+-- | Retrieve the value bound to the given variable.
 retrieve :: (Monad m, Ord var) => var -> MatchT sym var m (Item sym)
 retrieve v = 
   lookupVar v >>= \case
@@ -227,6 +239,9 @@ withFix p m = do
   S.lift . S.modify' $ setL fix (Just p)
   x <- m
   -- Restore the old fix
+  -- TODO: similarly as with `withLocalEnv`, it's not clear if this is correct.
+  -- It seems there's no guarantee that the original Fix will be restored,
+  -- because `x <- m` above can fail.
   S.lift . S.modify' $ setL fix oldFix
   return x
 
@@ -242,7 +257,7 @@ fixed = do
 
 -- | Retrieve the predicate with the given name.  The function with the name
 -- must exist, otherwise `retrievePred` thorws an error (alternatively, the
--- pattern match could simplify fail, but that could lead to hard to find
+-- pattern match could simplify fail, but that could lead to hard-to-find
 -- errors in deduction rules).
 retrievePred :: (Monad m) => PredName -> MatchT sym var m (Item sym -> Bool)
 retrievePred predName = do
@@ -268,28 +283,6 @@ retrieveFun funName = do
       , "' does not exist"
       ]
     Just fun -> return fun
-
-
--- | Retrieve the set of global variables in the given pattern.
-globalVarsIn :: (Ord var) => Pattern sym var -> Set.Set var
-globalVarsIn = \case
-  Const _ -> Set.empty
-  Pair p1 p2 -> globalVarsIn p1 <> globalVarsIn p2
-  Union up -> case up of
-    Left p -> globalVarsIn p
-    Right p -> globalVarsIn p
-  Var v -> Set.singleton v
-  Any -> Set.empty
-  App _ p -> globalVarsIn p
-  -- TODO: should we require that the sets of global variables in the two
-  -- branches of the `Or` pattern are the same?  Otherwise, `keyFor` may not
-  -- work (given that ultimately we match either the left or the right branch).
-  Or x y -> globalVarsIn x <> globalVarsIn y
-  -- Below, ignore `x` and `y`, which should contain local variables only
-  Let x e y -> globalVarsIn e
-  Via p x -> globalVarsIn p <> globalVarsIn x
-  Fix p -> globalVarsIn p
-  Rec -> Set.empty
 
 
 -- | Match the given pattern with the given item expression and bind item
@@ -327,21 +320,15 @@ match pt it =
       guard $ it' == it
       return it
     (Or p1 p2, it) -> do
-      -- TODO: do we want to restore the entire state, or just the environment?
-      -- Currently we do the former.
+      -- NOTE: we retrieve and then restore the entire state, even though the
+      -- fixed recursive pattern should never escape its syntactic scope so, in
+      -- theory, it should not change between the first and the second branch
+      -- of the `Or` pattern.  Perhaps this is something we could check
+      -- dynamically, just in case?
       state <- S.get
       match p1 it <|> do
         S.put state
         match p2 it
---     (Or p1 p2, it) -> do
---       env <- S.get
---       S.lift (runMaybeT $ match p1 it) >>= \case
---         Just x -> return x
---         Nothing -> do
---           S.put env
---           match p2 it
---     (AndP p1 p2, it) ->
---       match p1 it >>= match p2
     (Let x e y, it) -> do
       it' <- match e it
       withLocalEnv $ do
@@ -363,14 +350,13 @@ match pt it =
 
 -- | Dummy pattern matching
 --
--- Match the pattern against an invisible value by assuming that they match
+-- Match the pattern against a dummy value by assuming that they match
 -- perfectly.  The motivation behind `dummyMatch` is to bind the (global)
 -- variables in the pattern (to some dummy values), so that we can later learn
 -- what variables the pattern actually uses (and e.g. use `mkLock`).
 --
--- TODO: This is not pretty...  Why don't just retrieve the set of global
--- variables in the pattern and work with this?
---
+-- Internally, the function (a) retrieves the set of global variables in @p@
+-- and (b) binds them to unit values.
 dummyMatch
   :: (Monad m, Eq sym, Ord var)
   => Pattern sym var
@@ -382,40 +368,56 @@ dummyMatch p = do
 
 
 
--- | Convert the pattern to the corresponding item expression.  The pattern
--- should not have any free variables, nor wildcard patterns.
+-- | Convert the pattern to the corresponding item expression.  This is only
+-- possible if the pattern contains no free variables nor wildcard patterns.
+-- Otherwise, `close` will silently fail.
 --
--- TODO: What about logical (conjunction/disjunction) patterns?  Let and Via?
+-- Note that `close` should not modify the underlying state/environment.
 --
+-- The behavior of the function is undefined in case the pattern contains any
+-- of the following:
+-- * `Via` pattern
+-- * recursive pattern (`Fix` / `Rec`)
 close
-  :: (Monad m, Eq sym, Ord var)
+  :: (Monad m, Eq sym, Ord var, Show sym, Show var)
   => Pattern sym var
   -> MatchT sym var m (Item sym)
-close p =
-  case p of
-    Const it -> pure it
-    Pair p1 p2 -> I.Pair <$> close p1 <*> close p2
-    Union up ->
-      case up of
-        Left lp  -> I.Union .  Left <$> close lp
-        Right rp -> I.Union . Right <$> close rp
-    -- Fail if variable x not bound
-    Var x -> retrieve x
-    -- Fail in case of a wildcard (`Any`) pattern
-    Any -> empty
-    App fname p -> do
-      f <- retrieveFun fname
-      f <$> close p
-    -- Fail in case of logical patterns, recursive patterns, etc.
-    Or p1 p2 -> error "close Or"
-    -- AndP p1 p2 -> error "close AndP"
-    Let x e y -> error "close Let"
-    Via p x -> error "close Via"
-    Fix _ -> error "close Fix"
-    Rec -> error "close Rec"
---     Let x e y -> do
---       match x =<< close e
---       close y
+close = \case
+  Const it -> pure it
+  Pair p1 p2 -> I.Pair <$> close p1 <*> close p2
+  Union up ->
+    case up of
+      Left lp  -> I.Union .  Left <$> close lp
+      Right rp -> I.Union . Right <$> close rp
+  -- Fail if variable x not bound
+  Var v -> retrieve v
+  -- Fail in case of a wildcard pattern
+  Any -> empty
+  App fname p -> do
+    f <- retrieveFun fname
+    f <$> close p
+  Or p1 p2 ->
+    close p1 <|> close p2
+  Let x e y -> do
+    it <- close e
+    withLocalEnv $ do
+      match x it
+      close y
+  -- Not sure what to do with the three patterns below.  The intuitive
+  -- implementations are given below, but they would not necessarily provide
+  -- the desired behavior (especially in case of Fix/Ref).
+  Via _ _ -> error "close Via"
+  Fix _ -> error "close Fix"
+  Rec -> error "close Rec"
+--   Via p x -> do
+--     it <- close p
+--     match x it
+--   Fix p ->
+--     withFix p $ do
+--       close p
+--   Rec -> do
+--     p <- fixed
+--     close p
 
 
 --------------------------------------------------
@@ -447,18 +449,12 @@ data Cond sym var
   deriving (Show, Eq, Ord)
 
 
--- | Side condition checking monad
--- type SideM sym var a = RWS.RWS (Grammar sym) () (Env sym var) a
-
-
 -- | Check the side condition expression.  Note that `check` does not modify
--- the `Env`ironment, nor should it fail.  We keep it in the `MatchT` monad for
--- simplicity.
---
--- TODO: Consider putting `check` in its own monad, to enforce that it
--- satisfies the conditions described above.
---
-check :: (Monad m, Eq sym, Ord var) => Cond sym var -> MatchT sym var m Bool
+-- the `Env`ironment.  We keep it in the `MatchT` monad for simplicity.
+check
+  :: (Monad m, Eq sym, Ord var, Show sym, Show var)
+  => Cond sym var
+  -> MatchT sym var m Bool
 check cond =
   case cond of
     Eq px py  -> (==) <$> close px <*> close py
@@ -483,16 +479,6 @@ type Lock sym var = Pattern sym var
 -- corresponding lock.  It is important to note that each key has its
 -- corresponding lock (makes sense!).
 type Key sym var = Env sym var
-
-
--- -- | Check if the given item fits the lock.
--- fitsIn :: I.Item sym -> Lock sym var -> Bool
--- fitsIn x = isJust . itemKey x
-
-
--- -- | Retrieve the key of the item for the given lock.
--- itemKey :: I.Item sym -> Lock sym var -> Maybe (Key sym var)
--- itemKey x lock = undefined
 
 
 -- | Retrieve the lock of the pattern.  The lock can be used to determine the
