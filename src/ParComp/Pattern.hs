@@ -49,7 +49,7 @@ module ParComp.Pattern
 
 -- import qualified System.Random as R
 
-import           Control.Monad (guard, void)
+import           Control.Monad (guard, void, forM)
 import           Control.Applicative (Alternative, (<|>), empty)
 import           Control.Monad.Trans.Maybe (MaybeT(..))
 import qualified Control.Monad.State.Strict as S
@@ -62,7 +62,7 @@ import           Data.Lens.Light
 import qualified Data.Text as T
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as M
-import           Data.Maybe (isJust)
+import           Data.Maybe (isJust, catMaybes)
 
 import qualified ParComp.Item as I
 import           ParComp.Item (Item)
@@ -143,6 +143,28 @@ data Pattern sym var lvar
   | Fix (Pattern sym var lvar)
   -- | > Rec: call recursive pattern `p` defined with `Fix p`
   | Rec
+  -- | > With: pattern match and (then) check the condition
+  | With (Pattern sym var lvar) (Cond sym var lvar)
+  deriving (Show, Eq, Ord)
+
+
+-- | Condition expression
+--
+-- Note that condition expression must contain no free variables, nor wildcard
+-- patterns.  This is because side conditions are not matched against items.
+data Cond sym var lvar
+  -- | > Check the equality between two patterns
+  = Eq (Pattern sym var lvar) (Pattern sym var lvar)
+  -- | > Check if the given predicate is satisfied
+  | Pred PredName (Pattern sym var lvar)
+  -- | > Logical conjunction
+  | And (Cond sym var lvar) (Cond sym var lvar)
+  -- | > Logical disjunction
+  | OrC (Cond sym var lvar) (Cond sym var lvar)
+  -- | > Logical negation
+  | Neg (Cond sym var lvar)
+  -- | > Always True
+  | TrueC
   deriving (Show, Eq, Ord)
 
 
@@ -167,6 +189,18 @@ globalVarsIn = \case
   Via p x -> globalVarsIn p <> globalVarsIn x
   Fix p -> globalVarsIn p
   Rec -> Set.empty
+  With p c -> globalVarsIn p <> globalVarsInC c
+
+
+-- | Retrieve the set of global variables in the given pattern.
+globalVarsInC :: (Ord var) => Cond sym var lvar -> Set.Set var
+globalVarsInC = \case
+  Eq p1 p2 -> globalVarsIn p1 <> globalVarsIn p2
+  Pred _ p -> globalVarsIn p
+  And c1 c2 -> globalVarsInC c1 <> globalVarsInC c2
+  OrC c1 c2 -> globalVarsInC c1 <> globalVarsInC c2
+  Neg c -> globalVarsInC c
+  TrueC -> Set.empty
 
 
 --------------------------------------------------
@@ -427,6 +461,10 @@ match pt it =
     (Rec, it) -> do
       p <- fixed
       match p it
+    (With p c, it) -> do
+      match p it
+      check c >>= guard
+      return it
     _ ->
       -- Fail otherwise
       empty
@@ -492,6 +530,10 @@ close = \case
       -- safely match it with `it`
       match x it
       close y
+  With p c -> do
+    it <- close p
+    check c >>= guard
+    return it
   -- Not sure what to do with the three patterns below.  The intuitive
   -- implementations are given below, but they would not necessarily provide
   -- the desired behavior (especially in case of Fix/Ref).  In case of `Via`,
@@ -515,29 +557,6 @@ close = \case
 --------------------------------------------------
 -- Side conditions
 --------------------------------------------------
-
-
--- | Side condition expression
---
--- Note that a side condition must contain no free variables, nor wildcard
--- patterns.  This is because side conditions are not matched against items.
--- You can think of side conditions as additional checks verified once the
--- antecedent patterns are matched.
---
-data Cond sym var lvar
-  -- | > Check the equality between two patterns
-  = Eq (Pattern sym var lvar) (Pattern sym var lvar)
-  -- | > Check if the given predicate is satisfied
-  | Pred PredName (Pattern sym var lvar)
-  -- | > Logical conjunction
-  | And (Cond sym var lvar) (Cond sym var lvar)
-  -- | > Logical disjunction
-  | OrC (Cond sym var lvar) (Cond sym var lvar)
-  -- | > Logical negation
-  | Neg (Cond sym var lvar)
-  -- | > Always True
-  | TrueC
-  deriving (Show, Eq, Ord)
 
 
 -- | Check the side condition expression.  Note that `check` does not modify
@@ -566,48 +585,98 @@ check cond =
 -- Each `I.Item` (`Pattern`) can be matched with the `Lock` to produce the
 -- corresponding `Key`(s).  These keys then allow to find the item (pattern) in
 -- the index corresponding to the lock.
-type Lock sym var lvar = Pattern sym var lvar
+data Lock sym var lvar = Lock
+  { lockPatt :: Pattern sym var lvar
+    -- ^ The pattern of the lock
+  , lockVars :: Set.Set var
+    -- ^ Variables pertinent to the lock
+  } deriving (Show, Eq, Ord)
 
 
 -- | Key assigns values to the (global) variables in the corresponding lock.
 type Key sym var = Env sym var
 
 
+-- -- | Retrieve the lock of the pattern.  The lock can be used to determine the
+-- -- corresponding indexing structure.
+-- --
+-- -- The function replaces free variables with wildcards, with the exception of
+-- -- local variables, which are not handled.
+-- --
+-- -- TODO: In `Let x e y`, both `x` and `y` should contain no global variables.
+-- -- However, this is currently not enforced in any way.
+-- --
+-- -- TODO: We could also rename bound variables, so that the lock is insensitive
+-- -- to variable names.  (UPDATE: this is not necessarily the best idea,
+-- -- currently we rely on the fact that variables are not renamed).
+-- --
+-- mkLock
+--   :: (Monad m, Ord var)
+--   => Pattern sym var lvar
+--   -> MatchT sym var lvar m (Lock sym var lvar)
+-- mkLock = \case
+--   Const x -> pure $ Const x
+--   Pair x y -> Pair <$> mkLock x <*> mkLock y
+--   Union up -> case up of
+--     Left lp  -> Union .  Left <$> mkLock lp
+--     Right rp -> Union . Right <$> mkLock rp
+--   Var v ->
+--     lookupVar v >>= \case
+--       Just it -> pure $ Var v
+--       Nothing -> pure Any
+--   LVar v -> error "mkLock LVar"
+--   Any -> pure Any
+--   App fname p -> App fname <$> mkLock p
+--   Or x y -> Or <$> mkLock x <*> mkLock y
+--   Let x e y -> Let <$> pure x <*> mkLock e <*> pure y
+--   Via p x -> Via <$> mkLock p <*> mkLock x
+--   Fix p -> Fix <$> mkLock p
+--   Rec -> pure Rec
+
+
+-- | Variables bound in the given pattern
+boundVars
+  :: (Monad m, Ord var)
+  => Pattern sym var lvar
+  -> MatchT sym var lvar m (Set.Set var)
+boundVars p =
+  fmap (Set.fromList . catMaybes) $
+    forM (Set.toList $ globalVarsIn p) $ \v ->
+      lookupVar v >>= \case
+        Just _  -> pure $ Just v
+        Nothing -> pure Nothing
+
+
+-- boundVars = \case
+--   Const x -> pure Set.empty
+--   Pair x y -> (<>) <$> boundVars x <*> boundVars y
+--   Union up -> case up of
+--     Left lp  -> boundVars lp
+--     Right rp -> boundVars rp
+--   Var v ->
+--     lookupVar v >>= \case
+--       Just it -> pure $ Set.singleton v
+--       Nothing -> pure Set.empty
+--   LVar v -> error "boundVars LVar"
+--   Any -> pure Set.empty
+--   App _ p -> boundVars p
+--   Or x y -> (<>) <$> boundVars x <*> boundVars y
+--   Let _ e _ -> boundVars e
+--   Via p x -> (<>) <$> boundVars p <*> boundVars x
+--   Fix p -> boundVars p
+--   Rec -> pure Set.empty
+--   -- NOTE: the condition should contain no separate variable?
+--   With p _ -> error "boundVars With: not sure?"
+--     -- boundVars p
+
+
 -- | Retrieve the lock of the pattern.  The lock can be used to determine the
 -- corresponding indexing structure.
---
--- The function replaces free variables with wildcards, with the exception of
--- local variables, which are not handled.
---
--- TODO: In `Let x e y`, both `x` and `y` should contain no global variables.
--- However, this is currently not enforced in any way.
---
--- TODO: We could also rename bound variables, so that the lock is insensitive
--- to variable names.  (UPDATE: this is not necessarily the best idea,
--- currently we rely on the fact that variables are not renamed).
---
 mkLock
   :: (Monad m, Ord var)
   => Pattern sym var lvar
   -> MatchT sym var lvar m (Lock sym var lvar)
-mkLock = \case
-  Const x -> pure $ Const x
-  Pair x y -> Pair <$> mkLock x <*> mkLock y
-  Union up -> case up of
-    Left lp  -> Union .  Left <$> mkLock lp
-    Right rp -> Union . Right <$> mkLock rp
-  Var v ->
-    lookupVar v >>= \case
-      Just it -> pure $ Var v
-      Nothing -> pure Any
-  LVar v -> error "mkLock LVar"
-  Any -> pure Any
-  App fname p -> App fname <$> mkLock p
-  Or x y -> Or <$> mkLock x <*> mkLock y
-  Let x e y -> Let <$> pure x <*> mkLock e <*> pure y
-  Via p x -> Via <$> mkLock p <*> mkLock x
-  Fix p -> Fix <$> mkLock p
-  Rec -> pure Rec
+mkLock p = Lock p <$> boundVars p
 
 
 -- | Generate all the locks for the given rule.
@@ -664,9 +733,25 @@ _itemKeyFor funSet item lock handler = do
     -- TODO: Since we ignore the item below (result of the match), it may be
     -- that we will generate several keys which are identical.  This may be a
     -- problem (or not) from the efficiency point of view.
-    _ <- match lock item
+    _ <- match (lockPatt lock) item
     key <- S.gets (getL genv)
-    lift $ handler key
+    lift . handler $ M.restrictKeys key (lockVars lock)
+
+
+-- -- | Retrieve the values of the global variables in the lock, thus creating the
+-- -- key corresponding to the lock based on the current environment.
+-- --
+-- -- NOTE: in contrast with `itemKeyFor`, `keyFor` relies on the current
+-- -- environment.
+-- --
+-- keyFor
+--   :: (Monad m, Ord var)
+--   => Lock sym var lvar
+--   -> MatchT sym var lvar m (Key sym var)
+-- keyFor lock = do
+--   M.fromList <$> mapM
+--     (\v -> (v,) <$> retrieveVar v)
+--     (Set.toList $ globalVarsIn lock)
 
 
 -- | Retrieve the values of the global variables in the lock, thus creating the
@@ -680,9 +765,13 @@ keyFor
   => Lock sym var lvar
   -> MatchT sym var lvar m (Key sym var)
 keyFor lock = do
-  M.fromList <$> mapM
-    (\v -> (v,) <$> retrieveVar v)
-    (Set.toList $ globalVarsIn lock)
+  M.fromList . catMaybes <$> mapM getVar
+    (Set.toList $ lockVars lock)
+  where
+    getVar v = do
+      lookupVar v >>= \case
+        Nothing -> pure Nothing
+        Just it -> pure (Just (v, it))
 
 
 --------------------------------------------------
