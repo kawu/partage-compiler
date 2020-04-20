@@ -22,7 +22,7 @@ import           Data.Maybe (fromJust)
 
 import qualified ParComp.Item as I
 import qualified ParComp.Pattern as P
-import           ParComp.Pattern (Pattern(..))
+import           ParComp.Pattern (Pattern(..), Cond(..), FunName(..))
 import           ParComp.Parser (chartParse)
 
 import           Debug.Trace (trace)
@@ -138,7 +138,7 @@ splitAt p =
 -- | CFG complete rule with dots
 complete :: Rule
 complete =
-  P.Rule [leftP, rightP] downP P.TrueC
+  P.Rule [leftP, rightP] downP condP
   where
     leftP = item
       (rule (Var "A")
@@ -148,13 +148,16 @@ complete =
       )
       (span "i" "j")
     rightP = item
-      (rule (Var "B")
+      (rule (Var "C")
         (suffix $ Pair dot nil)
       )
       (span "j" "k")
+    condP = Eq
+      (App "label" (Var "B"))
+      (App "label" (Var "C"))
     downP = item
       (rule (Var "A")
-        ( App (P.FunName "append") $ Pair
+        ( App "append" $ Pair
             (Var "alpha")
             (Pair (Var "B") (Pair dot (Var "beta")))
         )
@@ -174,7 +177,7 @@ complete =
 -- | CFG predict rule
 predict :: Rule
 predict =
-  P.Rule [leftP, rightP] downP P.TrueC
+  P.Rule [leftP, rightP] downP condP
   where
     leftP = item
       (rule Any
@@ -183,7 +186,10 @@ predict =
         )
       )
       (span "i" "j")
-    rightP = Union . Right $ Via (rule (Var "B") Any) (Var "rule")
+    rightP = Union . Right $ Via (rule (Var "C") Any) (Var "rule")
+    condP = Eq
+      (App "label" (Var "B"))
+      (App "label" (Var "C"))
     downP = item
       (Var "rule")
       (span "j" "j")
@@ -233,31 +239,37 @@ cfgBaseItems inp cfgRules =
     dot = I.Unit
 
 
--- | CFG grammar functions
-cfgFunSet :: P.FunSet T.Text
-cfgFunSet = P.emptyFunSet
-  { P.funMap = M.singleton (P.FunName "append") append
-  }
-
-
 testCFG :: IO ()
 testCFG = do
   let cfgRules = S.fromList
-        [ ("NP", ["N"])
-        , ("NP", ["DET", "N"])
-        , ("S", ["NP", "VP"])
-        , ("VP", ["V"])
-        , ("VP", ["V", "Adv"])
-        , ("VP", ["Adv", "V"])
-        , ("VP", ["Adv", "V", "NP"])
-        , ("DET", ["a"])
-        , ("DET", ["some"])
-        , ("N", ["dog"])
-        , ("N", ["pizza"])
-        , ("V", ["eats"])
-        , ("V", ["runs"])
-        , ("Adv", ["quickly"])
+        [ ("NP_1", ["N_2"])
+        , ("NP_3", ["DET_4", "N_5"])
+        , ("S_6", ["NP_7", "VP_8"])
+        , ("VP_9", ["V_10"])
+        , ("VP_11", ["V_12", "Adv_13"])
+        , ("VP_14", ["Adv_15", "V_16"])
+        , ("VP_17", ["Adv_18", "V_19", "NP_20"])
+        , ("DET_21", ["a"])
+        , ("DET_22", ["some"])
+        , ("N_23", ["dog"])
+        , ("N_24", ["pizza"])
+        , ("V_25", ["eats"])
+        , ("V_26", ["runs"])
+        , ("Adv_27", ["quickly"])
         ]
+      label = \case
+        I.Sym x ->
+          case T.splitOn "_" x of
+            [term] -> I.Sym term
+            [nonTerm, _nodeId] -> I.Sym nonTerm
+            _ -> error $ "label: unhandled symbol (" ++ T.unpack x ++ ")"
+        x -> error $ "label: unhandled item (" ++ show x ++ ")"
+      cfgFunSet = P.emptyFunSet
+        { P.funMap = M.fromList
+            [ ("append", append)
+            , ("label", label)
+            ]
+        }
       sent = ["a", "dog", "quickly", "eats", "some", "pizza"]
       baseItems = cfgBaseItems sent cfgRules
       ruleMap = M.fromList

@@ -56,8 +56,8 @@ import           ParComp.Pattern (Pattern(..))
 
 -- | Index is a map from `Key`s to sets of items.  Each `Key` is defined within
 -- the context of the corresponding `Lock` (see `_indexMap` below).
-type Index sym var = M.Map
-  (P.Key sym var)
+type Index sym var lvar = M.Map
+  (P.Key sym var lvar)
   (S.Set (I.Item sym))
 
 
@@ -65,7 +65,7 @@ type Index sym var = M.Map
 data State sym var lvar = State
   { _agenda :: S.Set (I.Item sym)
   , _chart :: S.Set (I.Item sym)
-  , _indexMap :: M.Map (P.Lock sym var lvar) (Index sym var)
+  , _indexMap :: M.Map (P.Lock sym var lvar) (Index sym var lvar)
   } deriving (Show, Eq, Ord)
 $( makeLenses [''State] )
 
@@ -144,7 +144,7 @@ registerLock lock =
 saveKey
   :: (Monad m, Ord sym, Ord var, Ord lvar)
   => P.Lock sym var lvar
-  -> P.Key sym var
+  -> P.Key sym var lvar
   -> I.Item sym
   -> ChartT sym var lvar m ()
 saveKey lock key item = ST.modify'
@@ -159,7 +159,7 @@ saveKey lock key item = ST.modify'
 retrieveIndex
   :: (Monad m, Ord sym, Ord var, Ord lvar)
   => P.Lock sym var lvar
-  -> ChartT sym var lvar m (Index sym var)
+  -> ChartT sym var lvar m (Index sym var lvar)
 retrieveIndex lock =
   ST.gets $ maybe M.empty id . M.lookup lock . getL indexMap
 
@@ -169,45 +169,45 @@ retrieveIndex lock =
 --------------------------------------------------
 
 
--- | Apply rule.
-applyRule
-  :: (MonadIO m, Show sym, Show var, Show lvar, Ord sym, Ord var, Ord lvar)
-  => T.Text
-  -> P.Rule sym var lvar
-  -> I.Item sym
-  -> P.MatchT sym var lvar (ChartT sym var lvar m) (I.Item sym)
-applyRule ruleName rule mainItem = do
-  -- For each split into the main pattern and the remaining patterns
-  P.forEach (P.pickOne $ P.antecedents rule) $ \(mainPatt, restPatt) -> do
-    P.match mainPatt mainItem
-    case restPatt of
-      [otherPatt] -> do
-        lock <- P.mkLock otherPatt
+-- -- | Apply rule.
+-- applyRule
+--   :: (MonadIO m, Show sym, Show var, Show lvar, Ord sym, Ord var, Ord lvar)
+--   => T.Text
+--   -> P.Rule sym var lvar
+--   -> I.Item sym
+--   -> P.MatchT sym var lvar (ChartT sym var lvar m) (I.Item sym)
+-- applyRule ruleName rule mainItem = do
+--   -- For each split into the main pattern and the remaining patterns
+--   P.forEach (P.pickOne $ P.antecedents rule) $ \(mainPatt, restPatt) -> do
+--     P.match P.Strict mainPatt mainItem
+--     case restPatt of
+--       [otherPatt] -> do
+--         lock <- P.mkLock otherPatt
 --         liftIO $ do
 --           T.putStr "@@@ Lock: "
 --           print lock
-        index <- P.lift $ retrieveIndex lock
+--         index <- P.lift $ retrieveIndex lock
 --         liftIO $ do
 --           T.putStr "@@@ Index: "
 --           print index
-        key <- P.keyFor lock
+--         key <- P.keyFor lock
 --         liftIO $ do
 --           T.putStr "@@@ Key: "
 --           print key
-        let otherItems =
-              maybe [] S.toList $ M.lookup key index
-        P.forEach otherItems $ \otherItem -> do
+--         let otherItems =
+--               maybe [] S.toList $ M.lookup key index
+--         P.forEach otherItems $ \otherItem -> do
 --           liftIO $ do
 --             T.putStr "@@@ Other: "
 --             print otherItem
-          P.match otherPatt otherItem
+--           P.match P.Strict otherPatt otherItem
 --           liftIO $ do
 --             T.putStrLn "@@@ Matched with Other"
-          P.check (P.condition rule) >>= guard
+--           P.check P.Strict (P.condition rule) >>= guard
 --           liftIO $ do
 --             T.putStrLn "@@@ Conditions checked"
-          result <- P.close (P.consequent rule)
-          -- We managed to apply a rule!
+--           result <- P.close (P.consequent rule)
+--           -- We managed to apply a rule!
 --           liftIO $ do
 --             T.putStr "@@@ "
 --             T.putStr ruleName
@@ -215,11 +215,57 @@ applyRule ruleName rule mainItem = do
 --             putStr $ show [mainItem, otherItem]
 --             T.putStr " => "
 --             print result
-          -- Return the result
-          return result
-      _ -> error "applyRule: doesn't handle non-binary rules"
+--           -- Return the result
+--           return result
+--       _ -> error "applyRule: doesn't handle non-binary rules"
+-- 
+--     -- each = Pipes.Select . Pipes.each
 
-    -- each = Pipes.Select . Pipes.each
+
+-- | Apply directional rule.
+applyDirRule
+  :: (MonadIO m, Show sym, Show var, Show lvar, Ord sym, Ord var, Ord lvar)
+  => T.Text
+  -> P.DirRule sym var lvar
+  -> I.Item sym
+  -> P.MatchT sym var lvar (ChartT sym var lvar m) (I.Item sym)
+applyDirRule ruleName rule mainItem = do
+  P.match P.Strict (P.mainAnte rule) mainItem
+  case P.otherAntes rule of
+    [otherPatt] -> do
+      lock <- P.mkLock otherPatt
+--       liftIO $ do
+--         T.putStr "@@@ Lock: "
+--         print lock
+      index <- P.lift $ retrieveIndex lock
+--       liftIO $ do
+--         T.putStr "@@@ Index: "
+--         print index
+      key <- P.keyFor lock
+--       liftIO $ do
+--         T.putStr "@@@ Key: "
+--         print key
+      let otherItems =
+            maybe [] S.toList $ M.lookup key index
+      P.forEach otherItems $ \otherItem -> do
+--         liftIO $ do
+--           T.putStr "@@@ Other: "
+--           print otherItem
+        P.match P.Strict otherPatt otherItem
+--         liftIO $ do
+--           T.putStrLn "@@@ Matched with Other"
+        result <- P.close (P.dirConseq rule)
+        -- We managed to apply a rule!
+--         liftIO $ do
+--           T.putStr "@@@ "
+--           T.putStr ruleName
+--           T.putStr ": "
+--           putStr $ show [mainItem, otherItem]
+--           T.putStr " => "
+--           print result
+        -- Return the result
+        return result
+    _ -> error "applyRule: doesn't handle non-binary rules"
 
 
 --------------------------------------------------
@@ -245,7 +291,7 @@ chartParse funSet baseItems ruleMap isFinal =
 
     -- Register all the locks
     Pipes.runListT $ do
-      rule <- each $ M.elems ruleMap
+      rule <- each $ M.elems dirRuleMap
 --       liftIO $ do
 --         T.putStr "### Rule: "
 --         print rule
@@ -263,7 +309,11 @@ chartParse funSet baseItems ruleMap isFinal =
 
   where
 
-    each = Pipes.Select . Pipes.each
+    -- Map of directional rules
+    dirRuleMap = M.fromList $ do
+      (name, rule) <- M.toList ruleMap
+      (k, dirRule) <- zip [1..] $ P.directRule rule
+      return (name `T.append` T.pack (show k), dirRule)
 
     -- Process agenda until final item found (or until empty)
     processAgenda = do
@@ -284,7 +334,10 @@ chartParse funSet baseItems ruleMap isFinal =
 --         T.putStr "### Popped: "
 --         print item
       -- For each deduction rule
-      forM_ (M.toList ruleMap) $ \(ruleName, rule) -> do
+      forM_ (M.toList dirRuleMap) $ \(ruleName, rule) -> do
         P.runMatchT funSet $ do
-          result <- applyRule ruleName rule item
+          result <- applyDirRule ruleName rule item
           P.lift $ addToAgenda result
+
+    -- For each element in the list
+    each = Pipes.Select . Pipes.each
