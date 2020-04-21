@@ -127,11 +127,11 @@ data Pattern sym var lvar
   | LVar lvar
   -- | > Any: match any item expression (wildcard)
   | Any
-  -- | > Application: apply function to the given argument pattern.
-  -- The pattern must be possible to `close`.
-  | App FunName (Pattern sym var lvar)
-  -- | > Application: apply function to the item.
-  | AppArg FunName
+  -- | > Mapping: match the pattern with the item and apply the function to the
+  -- result.
+  | Map FunName (Pattern sym var lvar)
+  -- | > Application: apply the function to the item before pattern matching.
+  | App FunName
   -- | > Disjunction: match items which match either of the two patterns.
   -- `Or` provides non-determinism in pattern matching.
   | Or (Pattern sym var lvar) (Pattern sym var lvar)
@@ -171,10 +171,12 @@ data Cond sym var lvar
   | And (Cond sym var lvar) (Cond sym var lvar)
   -- | > Logical disjunction
   | OrC (Cond sym var lvar) (Cond sym var lvar)
-  -- | > Logical negation
-  | Neg (Cond sym var lvar)
   -- | > Always True
   | TrueC
+  -- NB: Logical negation would significantly complicate automatic indexing in
+  -- general and lazy matching in particular.
+  -- -- | > Logical negation
+  -- | Neg (Cond sym var lvar)
   deriving (Show, Eq, Ord)
 
 
@@ -196,8 +198,8 @@ globalVarsIn = \case
   Var v -> Set.singleton v
   LVar v -> error "globalVarsIn: encountered local variable!"
   Any -> Set.empty
-  App _ p -> globalVarsIn p
-  AppArg _ -> Set.empty
+  Map _ p -> globalVarsIn p
+  App _ -> Set.empty
   Or x y ->
     let xs = globalVarsIn x
         ys = globalVarsIn y
@@ -358,8 +360,8 @@ bindPatt p it = do
     Just it' -> guard $ it == it'
 
 
--- | Match alternatives (one or both).
--- TODO: elaborate.
+-- | Perform two alternative matches.  The environment is restored to its
+-- original state after the first match.
 alt
   :: (P.MonadIO m)
   => MatchT sym var lvar m a
@@ -507,7 +509,7 @@ match ms pt it =
       return it
     (Any, _) ->
       return it
-    (App fname p, it) -> do
+    (Map fname p, it) -> do
       f <- retrieveFun fname
       let strict = do
             x <- close p
@@ -522,7 +524,7 @@ match ms pt it =
             False -> do
               bindPatt p it
               return it
-    (AppArg fname, it) -> do
+    (App fname, it) -> do
       f <- retrieveFun fname
       each $ f it
     (Or p1 p2, it) -> do
@@ -634,12 +636,12 @@ close p =
           -- Nothing -> empty
       -- Fail in case of a wildcard pattern
       Any -> empty
-      App fname p -> do
+      Map fname p -> do
         f <- retrieveFun fname
         x <- close p
         y <- each $ f x
         return y
-      AppArg fname -> error "close AppArg"
+      App fname -> error "close App"
       Or p1 p2 ->
         -- NB: `alt` is not necessary, because `close` doesn't modify the state
         close p1 <|> close p2
@@ -696,8 +698,8 @@ closeable = \case
       Just it -> pure True
       Nothing -> pure False
   Any -> pure False
-  App _ p -> closeable p
-  AppArg _ -> pure False
+  Map _ p -> closeable p
+  App _ -> pure False
   Or p1 p2 -> do
     c1 <- closeable p1
     c2 <- closeable p2
@@ -726,7 +728,7 @@ closeableC = \case
   -- TODO: what about the line below?
   OrC cx cy -> undefined
   -- OrC cx cy -> (&&) <$> closeableC cx <*> closeableC cy
-  Neg c -> closeableC c
+  -- Neg c -> closeableC c
   TrueC -> pure True
 
 
@@ -750,7 +752,7 @@ check Strict cond =
     Pred pname p -> retrievePred pname <*> close p
     And cx cy -> (&&) <$> check Strict cx <*> check Strict cy
     OrC cx cy -> (||) <$> check Strict cx <*> check Strict cy
-    Neg c -> not <$> check Strict c
+    -- Neg c -> not <$> check Strict c
     TrueC -> pure True
 check Lazy cond =
   case cond of
@@ -775,19 +777,19 @@ check Lazy cond =
         -- False -> error "check Lazy: doesn't support not closeable Pred yet"
         False -> do
           -- NB: We bind the pattern (see also `getLockVarsC`) to the unit
-          -- value to indicate that the value of the condition is True
+          -- value to indicate that the value of the condition is True.
           bindPatt (With (Const I.Unit) (Pred pname p)) I.Unit
           -- (*) See `Neg` below
           return True
     And cx cy -> (&&) <$> check Lazy cx <*> check Lazy cy
     -- Similarly as in `getLockVarsC`, we take the alternative in case of `Or`
     OrC cx cy -> check Lazy cx `alt` check Lazy cy
-    -- TODO: The line below is probably not correct; in case of Lazy matching,
-    -- some embedded check may succeed simply because we can't tell yet if they
-    -- succeed or not (see (*) above)
-    Neg c -> not <$> check Lazy c
+    -- NB: The line below (commented out) is probably incorrect. In case of
+    -- Lazy matching, some embedded check may succeed simply because we can't
+    -- tell yet if it succeeds or not (see (*) above).  Hence, negating the
+    -- embedded result doesn't make sense.
+    -- Neg c -> not <$> check Lazy c
     TrueC -> pure True
-    -- _ -> error "check Lazy: doesn't support it yet"
 
 
 --------------------------------------------------
@@ -910,11 +912,11 @@ getLockVars = \case
       Nothing -> pure Set.empty
   LVar v -> error "getLockVars: encountered local variable!"
   Any -> pure Set.empty
-  App fn p -> do
+  Map fn p -> do
     closeable p >>= \case
-      True -> pure $ Set.singleton (App fn p)
+      True -> pure $ Set.singleton (Map fn p)
       False -> pure Set.empty
-  AppArg _ -> pure Set.empty
+  App _ -> pure Set.empty
   Or x y -> do
     -- NB: Since we assume that both @x@ and @y@ contain the same global
     -- variables (see `globalVarsIn`), @getLockVars x@ and @getLockVars y@
@@ -954,7 +956,7 @@ getLockVarsC = \case
   And c1 c2 -> (<>) <$> getLockVarsC c1 <*> getLockVarsC c2
   -- NB: `alt` is not necessary since `getLockVar` doesn't modify the state
   OrC c1 c2 -> getLockVarsC c1 <|> getLockVarsC c2
-  Neg c -> getLockVarsC c
+  -- Neg c -> getLockVarsC c
   TrueC -> pure Set.empty
 
 

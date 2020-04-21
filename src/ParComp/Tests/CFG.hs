@@ -177,7 +177,7 @@ complete =
     leftP = item
       (rule (Var "A")
         -- ( Via (splitAt dot)
-        ( Via (AppArg "splitAtDot")
+        ( Via (App "splitAtDot")
             (Pair (Var "alpha") (Pair dot (Pair (Var "B") (Var "beta"))))
         )
       )
@@ -185,15 +185,15 @@ complete =
     rightP = item
       (rule (Var "C")
         -- (suffix $ Pair dot nil)
-        (AppArg "endsWithDot")
+        (App "endsWithDot")
       )
       (span "j" "k")
     condP = Eq
-      (App "label" (Var "B"))
-      (App "label" (Var "C"))
+      (Map "label" (Var "B"))
+      (Map "label" (Var "C"))
     downP = item
       (rule (Var "A")
-        ( App "append" $ Pair
+        ( Map "append" $ Pair
             (Var "alpha")
             (Pair (Var "B") (Pair dot (Var "beta")))
         )
@@ -218,15 +218,15 @@ predict =
     leftP = item
       (rule Any
         -- ( Via (splitAt dot)
-        ( Via (AppArg "splitAtDot")
+        ( Via (App "splitAtDot")
             (Pair Any (Pair dot (Pair (Var "B") Any)))
         )
       )
       (span "i" "j")
     rightP = Union . Right $ Via (rule (Var "C") Any) (Var "rule")
     condP = Eq
-      (App "label" (Var "B"))
-      (App "label" (Var "C"))
+      (Map "label" (Var "B"))
+      (Map "label" (Var "C"))
     downP = item
       (Var "rule")
       (span "j" "j")
