@@ -554,7 +554,7 @@ match ms pt it =
       match ms p it
     (With p c, it) -> do
       match ms p it
-      check ms c >>= guard
+      check ms c
 --       flag <- check ms c
 --       e <- S.gets $ getL penv
 --       P.liftIO $ do
@@ -654,7 +654,7 @@ close p =
           close y
       With p c -> do
         it <- close p
-        check Strict c >>= guard
+        check Strict c
         return it
       -- Not sure what to do with the three patterns below.  The intuitive
       -- implementations are given below, but they would not necessarily
@@ -725,7 +725,7 @@ closeableC = \case
   Eq px py -> (&&) <$> closeable py <*> closeable py
   Pred _ p -> closeable p
   And cx cy -> (&&) <$> closeableC cx <*> closeableC cy
-  -- TODO: what about the line below?
+  -- TODO: what about the case below?
   OrC cx cy -> undefined
   -- OrC cx cy -> (&&) <$> closeableC cx <*> closeableC cy
   -- Neg c -> closeableC c
@@ -746,51 +746,53 @@ check
   :: (P.MonadIO m, Ord sym, Ord var, Ord lvar, Show sym, Show var, Show lvar)
   => MatchingStrategy
   -> Cond sym var lvar
-  -> MatchT sym var lvar m Bool
+  -> MatchT sym var lvar m ()
 check Strict cond =
   case cond of
-    Eq px py  -> (==) <$> close px <*> close py
-    Pred pname p -> retrievePred pname <*> close p
-    And cx cy -> (&&) <$> check Strict cx <*> check Strict cy
-    OrC cx cy -> (||) <$> check Strict cx <*> check Strict cy
+    Eq px py  -> do
+      x <- close px
+      y <- close py
+      guard $ x == y
+    Pred pname p -> do
+      flag <- retrievePred pname <*> close p
+      guard flag
+    And cx cy -> check Strict cx  >> check Strict cy
+    OrC cx cy -> check Strict cx <|> check Strict cy
     -- Neg c -> not <$> check Strict c
-    TrueC -> pure True
+    TrueC -> pure ()
 check Lazy cond =
   case cond of
     Eq px py -> do
       cx <- closeable px
       cy <- closeable py
       case (cx, cy) of
-        (True, True) -> (==) <$> close px <*> close py
-        (True, False) -> do
-          bindPatt py =<< close px
-          -- (*) See `Neg` below
-          return True
-        (False, True) -> do
-          bindPatt px =<< close py
-          -- (*) See `Neg` below
-          return True
+        (True, True) -> do
+          x <- close px
+          y <- close py
+          guard $ x == y
+        (True, False) -> bindPatt py =<< close px
+        (False, True) -> bindPatt px =<< close py
         (False, False) -> error "check Lazy: both patterns not closeable"
     Pred pname p -> do
       pred <- retrievePred pname
       closeable p >>= \case
-        True  -> pred <$> close p
-        -- False -> error "check Lazy: doesn't support not closeable Pred yet"
+        True  -> do
+          flag <- pred <$> close p
+          guard flag
         False -> do
           -- NB: We bind the pattern (see also `getLockVarsC`) to the unit
           -- value to indicate that the value of the condition is True.
           bindPatt (With (Const I.Unit) (Pred pname p)) I.Unit
-          -- (*) See `Neg` below
-          return True
-    And cx cy -> (&&) <$> check Lazy cx <*> check Lazy cy
-    -- Similarly as in `getLockVarsC`, we take the alternative in case of `Or`
+    And cx cy -> check Lazy cx >> check Lazy cy
+    -- NB: Below, `alt` is necessary since `check` can modify the state in case
+    -- of lazy evaluation
     OrC cx cy -> check Lazy cx `alt` check Lazy cy
     -- NB: The line below (commented out) is probably incorrect. In case of
     -- Lazy matching, some embedded check may succeed simply because we cannot
     -- determine its status yet (see (*) above).  Hence, negating the embedded
     -- result doesn't make sense.
     -- Neg c -> not <$> check Lazy c
-    TrueC -> pure True
+    TrueC -> pure ()
 
 
 --------------------------------------------------
@@ -828,7 +830,7 @@ apply Rule{..} items = do
     (uncurry $ match Strict)
     (zip antecedents items)
   -- Make sure the side condition holds
-  check Strict condition >>= guard
+  check Strict condition
   -- Convert the consequent to the resulting item
   close consequent
 
@@ -860,15 +862,6 @@ directRule rule = do
       , dirConseq = consequent rule
       }
     _ -> error "directRule: doesn't handle non-binary rules"
-
-
--- -- | Apply the directional rule.
--- applyDir
---   :: (P.MonadIO m, Eq sym, Ord var, Ord lvar, Show sym, Show var, Show lvar)
---   => DirRule sym var lvar
---   -> Item sym
---   -> [Item sym]
---   -> MatchT sym var lvar m (Item sym)
 
 
 --------------------------------------------------
