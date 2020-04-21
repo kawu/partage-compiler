@@ -97,7 +97,7 @@ newtype PredName = PredName {unPredName :: T.Text}
 data FunSet sym = FunSet
   { predMap :: M.Map PredName (Item sym -> Bool)
     -- ^ Named predicate functions.
-  , funMap :: M.Map FunName (Item sym -> Item sym)
+  , funMap :: M.Map FunName (Item sym -> [Item sym])
     -- ^ Named item expression functions
   }
 
@@ -129,6 +129,8 @@ data Pattern sym var lvar
   -- | > Application: apply function to the given argument pattern.
   -- The pattern must be possible to `close`.
   | App FunName (Pattern sym var lvar)
+  -- | > Application: apply function to the item.
+  | AppArg FunName
   -- | > Disjunction: match items which match either of the two patterns.
   -- `Or` provides non-determinism in pattern matching.
   | Or (Pattern sym var lvar) (Pattern sym var lvar)
@@ -156,8 +158,9 @@ data Pattern sym var lvar
 
 -- | Condition expression
 --
--- Note that condition expression must contain no free variables, nor wildcard
--- patterns.  This is because side conditions are not matched against items.
+-- Note that condition expression should not contain no free variables, nor
+-- wildcard patterns.  This is because side conditions are not matched against
+-- items.
 data Cond sym var lvar
   -- | > Check the equality between two patterns
   = Eq (Pattern sym var lvar) (Pattern sym var lvar)
@@ -174,7 +177,14 @@ data Cond sym var lvar
   deriving (Show, Eq, Ord)
 
 
--- | Retrieve the set of global variables in the given pattern.
+-- | Retrieve the set of global variables bound in the pattern.
+--
+-- A variable is bound in the pattern if it gets bound during matching of the
+-- pattern with an item.
+--
+-- Assumption: In case of the `Or` pattern, we assume that both branches
+-- contain the same set of global variables (however, this is not checked at
+-- the moment).
 globalVarsIn :: (Ord var) => Pattern sym var lvar -> Set.Set var
 globalVarsIn = \case
   Const _ -> Set.empty
@@ -186,9 +196,7 @@ globalVarsIn = \case
   LVar v -> error "globalVarsIn: encountered local variable!"
   Any -> Set.empty
   App _ p -> globalVarsIn p
-  -- TODO: should we require that the sets of global variables in the two
-  -- branches of the `Or` pattern are the same?  Otherwise, `keyFor` may not
-  -- work (given that ultimately we match either the left or the right branch).
+  AppArg _ -> Set.empty
   Or x y -> globalVarsIn x <> globalVarsIn y
   -- Below, ignore `x` and `y`, which should contain local variables only
   Let x e y -> globalVarsIn e
@@ -228,7 +236,7 @@ data PMState sym var lvar = PMState
   , _fix :: Maybe (Pattern sym var lvar)
     -- ^ Fixed recursive pattern
   , _penv :: Env sym (Pattern sym var lvar)
-    -- ^ Pattern binding environment, only in case of lazy matching
+    -- ^ Pattern binding environment (only relevant for lazy matching)
   } deriving (Show)
 $( makeLenses [''PMState] )
 
@@ -322,7 +330,7 @@ bindLVar
 bindLVar v it = S.modify' . modL lenv $ M.insert v it
 
 
--- | TODO
+-- | Look up the value bound to the given pattern.
 lookupPatt
   :: (Monad m, Ord sym, Ord var, Ord lvar)
   => Pattern sym var lvar
@@ -330,18 +338,7 @@ lookupPatt
 lookupPatt p = S.gets $ M.lookup p . getL penv
 
 
--- -- | TODO
--- retrievePatt
---   :: (Monad m, Ord sym, Ord var, Ord lvar)
---   => Pattern sym var lvar
---   -> MatchT sym var lvar m (Item sym)
--- retrievePatt p =
---   lookupPatt p >>= \case
---     Nothing -> empty
---     Just it -> pure it
-
-
--- | Bind the item to the given pattern.
+-- | Bind the item value to the given pattern.
 bindPatt
   :: (Monad m, Ord sym, Ord var, Ord lvar)
   => Pattern sym var lvar
@@ -425,7 +422,7 @@ retrievePred predName = do
 retrieveFun
   :: (Monad m)
   => FunName
-  -> MatchT sym var lvar m (Item sym -> Item sym)
+  -> MatchT sym var lvar m (Item sym -> [Item sym])
 retrieveFun funName = do
   mayFun <- RWS.asks (M.lookup funName . funMap)
   case mayFun of
@@ -444,14 +441,22 @@ retrieveFun funName = do
 
 -- | Pattern matching strategy
 data MatchingStrategy
-  = Lazy
-  | Strict
+  = Strict
+  -- | Strict matching requires that, whenever a `Cond`ition is encountered, or
+  -- a function `App`lication, all the variables necessary to their evaluation
+  -- are already bound.  This should be considered as the default matching
+  -- strategy.
+  | Lazy
+  -- | Lazy pattern matching can be performed in an environment where not all
+  -- variables that are necessary to perform the evaluation are bound.  As a
+  -- result of lazy matching, the pattern binding environment provides the
+  -- values of selected patterns, which could not have been evaluated so far.
+  deriving (Show, Eq, Ord)
 
 
--- | Match the given pattern with the given item expression and bind item
--- subexpressions to pattern variables.  The result of a match is an item
--- expression, which is not necessarily the same as the input item due to the
--- `Let` pattern construction, which allows to change the matching result.
+-- | Match the pattern with the given item expression.  The resulting item is
+-- not necessarily the same as the input item due to the `Let` pattern
+-- construction, which allows to change the matching result.
 match
   :: (P.MonadIO m, Show sym, Show var, Show lvar, Ord sym, Ord var, Ord lvar)
   => MatchingStrategy
@@ -484,7 +489,8 @@ match ms pt it =
     (App fname p, it) -> do
       f <- retrieveFun fname
       let strict = do
-            it' <- f <$> close p
+            x <- close p
+            it' <- each $ f x
             guard $ it' == it
             return it
       case ms of
@@ -495,6 +501,9 @@ match ms pt it =
             False -> do
               bindPatt p it
               return it
+    (AppArg fname, it) -> do
+      f <- retrieveFun fname
+      each $ f it
     (Or p1 p2, it) -> do
       -- NOTE: we retrieve and then restore the entire state, even though the
       -- fixed recursive pattern should never escape its syntactic scope so, in
@@ -547,76 +556,6 @@ dummyMatch p = do
     (Set.toList $ globalVarsIn p)
 
 
--- -- | Convert the pattern to the corresponding item expression.  This is only
--- -- possible if the pattern contains no free variables nor wildcard patterns.
--- --
--- -- Note that `close` should not modify the underlying state/environment.
--- --
--- -- The behavior of the function is undefined for patterns containing any of the
--- -- following:
--- -- * `Via` patterns
--- -- * recursive patterns (`Fix` / `Rec`)
--- close
---   :: (P.MonadIO m, Ord sym, Ord var, Ord lvar, Show sym, Show var, Show lvar)
---   => Pattern sym var lvar
---   -> MatchT sym var lvar m (Item sym)
--- close = \case
---   Const it -> pure it
---   Pair p1 p2 -> I.Pair <$> close p1 <*> close p2
---   Union up ->
---     case up of
---       Left lp  -> I.Union .  Left <$> close lp
---       Right rp -> I.Union . Right <$> close rp
---   -- Fail if variable x not bound
---   -- UPDATE: Not just silently fail, but raise an error
---   Var v ->
---     -- retrieveVar v
---     lookupVar v >>= \case
---       Just it -> pure it
---       Nothing -> error $ "close: Var not bound"
---   LVar v ->
---     lookupLVar v >>= \case
---       Just it -> pure it
---       Nothing -> error $ "close: LVar not bound"
---       -- Nothing -> empty
---   -- Fail in case of a wildcard pattern
---   Any -> empty
---   App fname p -> do
---     f <- retrieveFun fname
---     f <$> close p
---   Or p1 p2 ->
---     close p1 <|> close p2
---   Let x e y -> do
---     it <- close e
---     withLocalEnv $ do
---       -- Since `x` should contain only local variables, we can (relatively)
---       -- safely match it with `it`
---       match undefined x it
---       close y
---   With p c -> do
---     it <- close p
---     check Strict c >>= guard
---     return it
---   -- Not sure what to do with the three patterns below.  The intuitive
---   -- implementations are given below, but they would not necessarily provide
---   -- the desired behavior (especially in case of Fix/Ref).  In case of `Via`,
---   -- the intuitive implementation would require performing the match with
---   -- possibly global variables.  We could alternatively perform the @close x@
---   -- operation beforehand.
---   Via _ _ -> error "close Via"
---   Fix _ -> error "close Fix"
---   Rec -> error "close Rec"
--- --   Via p x -> do
--- --     it <- close p
--- --     match x it
--- --   Fix p ->
--- --     withFix p $ do
--- --       close p
--- --   Rec -> do
--- --     p <- fixed
--- --     close p
-
-
 -- | Convert the pattern to the corresponding item expression.  This is only
 -- possible if the pattern contains no free variables nor wildcard patterns.
 --
@@ -626,6 +565,13 @@ dummyMatch p = do
 -- following:
 -- * `Via` patterns
 -- * recursive patterns (`Fix` / `Rec`)
+--
+-- There is a subtle interaction between `close` and lazy matching.  It is
+-- possible to `close` a pattern that actually contains free variables,
+-- provided that the pattern binding environment provides the values of the
+-- sub-patterns containing those variables (such variables are thus not truly
+-- free, we don't know their value, but we know the values of certain patterns
+-- that contain them).
 close
   :: (P.MonadIO m, Ord sym, Ord var, Ord lvar, Show sym, Show var, Show lvar)
   => Pattern sym var lvar
@@ -642,23 +588,26 @@ close p =
         case up of
           Left lp  -> I.Union .  Left <$> close lp
           Right rp -> I.Union . Right <$> close rp
-      -- Fail if variable x not bound
-      -- UPDATE: Not just silently fail, but raise an error
-      Var v ->
-        -- retrieveVar v
-        lookupVar v >>= \case
-          Just it -> pure it
-          Nothing -> error $ "close: Var not bound"
+      -- Fail (silently) if variable x not bound
+      Var v -> retrieveVar v
+--         lookupVar v >>= \case
+--           Just it -> pure it
+--           Nothing -> error $ "close: Var not bound"
       LVar v ->
         lookupLVar v >>= \case
           Just it -> pure it
+          -- Local variables have syntactic scope, so the following should
+          -- never happen
           Nothing -> error $ "close: LVar not bound"
           -- Nothing -> empty
       -- Fail in case of a wildcard pattern
       Any -> empty
       App fname p -> do
         f <- retrieveFun fname
-        f <$> close p
+        x <- close p
+        y <- each $ f x
+        return y
+      AppArg fname -> error "close AppArg"
       Or p1 p2 ->
         close p1 <|> close p2
       Let x e y -> do
@@ -666,18 +615,19 @@ close p =
         withLocalEnv $ do
           -- Since `x` should contain only local variables, we can (relatively)
           -- safely match it with `it`
-          match undefined x it
+          match Strict x it
           close y
       With p c -> do
         it <- close p
         check Strict c >>= guard
         return it
       -- Not sure what to do with the three patterns below.  The intuitive
-      -- implementations are given below, but they would not necessarily provide
-      -- the desired behavior (especially in case of Fix/Ref).  In case of `Via`,
-      -- the intuitive implementation would require performing the match with
-      -- possibly global variables.  We could alternatively perform the @close x@
-      -- operation beforehand.
+      -- implementations are given below, but they would not necessarily
+      -- provide the desired behavior (especially in case of Fix/Ref).  In case
+      -- of `Via`, the intuitive implementation would require performing the
+      -- match with possibly global variables.  We could alternatively perform
+      -- the @close x@ operation beforehand.  I guess we need some good
+      -- examples showing what to do with those cases (if anything).
       Via _ _ -> error "close Via"
       Fix _ -> error "close Fix"
       Rec -> error "close Rec"
@@ -714,9 +664,16 @@ closeable = \case
       Nothing -> pure False
   Any -> pure False
   App _ p -> closeable p
-  Or p1 p2 ->
-    -- TODO: not sure about this one at all!
-    (&&) <$> closeable p1 <*> closeable p2
+  AppArg _ -> pure False
+  Or p1 p2 -> do
+    c1 <- closeable p1
+    c2 <- closeable p2
+    -- NB: The notion of being `closeable` relies on the status of global
+    -- variables (bound or not) in the pattern.  We assume that the set of
+    -- global variables is the same in both `Or` branches.
+    if c1 == c2
+       then return c1
+       else error "closeable Or: different results for different branches"
   Let x e y -> closeable e
   With p c -> (&&) <$> closeable p <*> closeableC c
   Via _ _ -> error "closeable Via"
@@ -734,7 +691,8 @@ closeableC = \case
   Pred _ p -> closeable p
   And cx cy -> (&&) <$> closeableC cx <*> closeableC cy
   -- TODO: what about the line below?
-  OrC cx cy -> (&&) <$> closeableC cx <*> closeableC cy
+  OrC cx cy -> undefined
+  -- OrC cx cy -> (&&) <$> closeableC cx <*> closeableC cy
   Neg c -> closeableC c
   TrueC -> pure True
 
@@ -770,21 +728,33 @@ check Lazy cond =
         (True, True) -> (==) <$> close px <*> close py
         (True, False) -> do
           bindPatt py =<< close px
+          -- (*) See `Neg` below
           return True
         (False, True) -> do
           bindPatt px =<< close py
+          -- (*) See `Neg` below
           return True
-        (False, False) -> error "check Lazy: both pattern not closeable"
+        (False, False) -> error "check Lazy: both patterns not closeable"
     Pred pname p -> do
       pred <- retrievePred pname
       closeable p >>= \case
         True  -> pred <$> close p
-        False -> error "check Lazy: doesn't support not closeable Pred yet"
---     And cx cy -> (&&) <$> check Strict cx <*> check Strict cy
---     OrC cx cy  -> (||) <$> check Strict cx <*> check Strict cy
---     Neg c -> not <$> check Strict c
+        -- False -> error "check Lazy: doesn't support not closeable Pred yet"
+        False -> do
+          -- NB: We bind the pattern (see also `getLockVarsC`) to the unit
+          -- value to indicate that the value of the condition is True
+          bindPatt (With (Const I.Unit) (Pred pname p)) I.Unit
+          -- (*) See `Neg` below
+          return True
+    And cx cy -> (&&) <$> check Lazy cx <*> check Lazy cy
+    -- Similarly as in `getLockVarsC`, we take the alternative in case of `Or`
+    OrC cx cy -> check Lazy cx <|> check Lazy cy
+    -- TODO: The line below is probably not correct; in case of Lazy matching,
+    -- some embedded check may succeed simply because we can't tell yet if they
+    -- succeed or not (see (*) above)
+    Neg c -> not <$> check Lazy c
     TrueC -> pure True
-    _ -> error "check Lazy: doesn't support it yet"
+    -- _ -> error "check Lazy: doesn't support it yet"
 
 
 --------------------------------------------------
@@ -942,14 +912,20 @@ getLockVars = \case
       Nothing -> pure Set.empty
   LVar v -> error "getLockVars: encountered local variable!"
   Any -> pure Set.empty
-  App _ p -> do
+  App fn p -> do
     closeable p >>= \case
-      True -> pure Set.empty
-      False -> pure $ Set.singleton p
-  -- TODO: like with `globalVarsIn`, it's not clear what should be done we
-  -- disjunctive patterns.  Perhaps this should lead to generating several
-  -- locks (using <|>), or hierarchical locks?
-  Or x y -> (<>) <$> getLockVars x <*> getLockVars y
+      True -> pure $ Set.singleton (App fn p)
+      False -> pure Set.empty
+  AppArg _ -> pure Set.empty
+  Or x y -> do
+    -- NB: Since we assume that both @x@ and @y@ contain the same global
+    -- variables (see `globalVarsIn`), @getLockVars x@ and @getLockVars y@
+    -- should yield the same result.
+    s1 <- getLockVars x
+    s2 <- getLockVars y
+    if s1 == s2
+       then return s1
+       else error "getLockVars Or: different results for different branches"
   -- Below, ignore `x` and `y`, which should contain local variables only
   Let x e y -> getLockVars e
   Via p x -> (<>) <$> getLockVars p <*> getLockVars x
@@ -970,11 +946,18 @@ getLockVarsC = \case
     case (cx, cy) of
       (True, False) -> pure $ Set.singleton px
       (False, True) -> pure $ Set.singleton py
-      _ -> undefined
---   Pred _ p -> getLockVarsC p
---   And c1 c2 -> getLockVarsC c1 <> getLockVarsC c2
---   OrC c1 c2 -> getLockVarsC c1 <> getLockVarsC c2
---   Neg c -> getLockVarsC c
+      _ -> pure Set.empty
+  Pred pn p ->
+    closeable p >>= \case
+      -- NB: Below, we cast the predicate to a `With` pattern.  This is because
+      -- currently the lock only supports patterns, and not conditions.
+      True -> pure $ Set.singleton (With (Const I.Unit) (Pred pn p))
+      False -> pure Set.empty
+  And c1 c2 -> (<>) <$> getLockVarsC c1 <*> getLockVarsC c2
+  -- In case of `Or`, we take the alternative; TODO: This means that
+  -- `getLockVars` and `getLockVarsC` are non-deterministic.  Is this OK?
+  OrC c1 c2 -> getLockVarsC c1 <|> getLockVarsC c2
+  Neg c -> getLockVarsC c
   TrueC -> pure Set.empty
 
 
@@ -1078,8 +1061,6 @@ keyFor
   => Lock sym var lvar
   -> MatchT sym var lvar m (Key sym var lvar)
 keyFor lock = do
-  -- TODO: Below, it is not enough to simply `close` the individual key
-  -- patterns (in general).
   let ps = Set.toList $ lockVars lock
   fmap M.fromList . forM ps $ \p -> do
 --     P.liftIO $ do
@@ -1100,6 +1081,11 @@ keyFor lock = do
 --------------------------------------------------
 -- Utils
 --------------------------------------------------
+
+
+-- | TODO: add types
+each :: (Monad m) => [a] -> P.ListT m a
+each = P.Select . P.each
 
 
 -- | Return subsets of the given size

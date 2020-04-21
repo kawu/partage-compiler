@@ -292,13 +292,13 @@ chartParse funSet baseItems ruleMap isFinal =
     -- Register all the locks
     Pipes.runListT $ do
       rule <- each $ M.elems dirRuleMap
---       liftIO $ do
---         T.putStr "### Rule: "
---         print rule
+      liftIO $ do
+        T.putStr "### Rule: "
+        print rule
       lock <- P.locksFor funSet rule
---       liftIO $ do
---         T.putStr "### Lock: "
---         print lock
+      liftIO $ do
+        T.putStr "### Lock: "
+        print lock
       lift $ registerLock lock
 
     -- Put all base items to agenda
