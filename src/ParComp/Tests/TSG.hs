@@ -65,33 +65,67 @@ removeSuffix p =
     nil = Const I.Unit
 
 
--- | Split a list xs into two parts (ys, zs) w.r.t pattern p so that:
---
--- * ys = removeSuffix p xs
--- * zs = suffix p xs
---
-splitAt :: Patt -> Patt
-splitAt p =
-  Fix $ Or p1 (Or p2 p3)
+-- -- | Split a list xs into two parts (ys, zs) w.r.t pattern p so that:
+-- --
+-- -- * ys = removeSuffix p xs
+-- -- * zs = suffix p xs
+-- --
+-- splitAt :: Patt -> Patt
+-- splitAt p =
+--   Fix $ Or p1 (Or p2 p3)
+--   where
+--     p1 = Let
+--       (LVar "suff")
+--       (cons p Any)
+--       (pair nil (LVar "suff"))
+--     p2 = Let
+--       (pair (LVar "x") (pair (LVar "pref") (LVar "suff")))
+--       -- NOTE: we could simply write:
+--       --   `(cons Any (splitAt p))`
+--       -- However, we don't want recursion in our patterns, since this would
+--       -- prevent us from comparing them and storing them in dictionaries.
+--       -- Explicit recursion with `Fix` and `Rec` solves this problem.
+--       (cons Any Rec)
+--       (pair (cons (LVar "x") (LVar "pref")) (LVar "suff"))
+--     p3 = pair nil nil
+--     -- Helper functions
+--     nil = Const I.Unit
+--     cons = Pair
+--     pair = Pair
+
+
+-- | Split the list at the given item.
+splitAt :: (Eq sym) => I.Item sym -> I.Item sym -> [I.Item sym]
+splitAt item =
+  (:[]) . uncurry I.Pair . go
   where
-    p1 = Let
-      (LVar "suff")
-      (cons p Any)
-      (pair nil (LVar "suff"))
-    p2 = Let
-      (pair (LVar "x") (pair (LVar "pref") (LVar "suff")))
-      -- NOTE: we could simply write:
-      --   `(cons Any (splitAt p))`
-      -- However, we don't want recursion in our patterns, since this would
-      -- prevent us from comparing them and storing them in dictionaries.
-      -- Explicit recursion with `Fix` and `Rec` solves this problem.
-      (cons Any Rec)
-      (pair (cons (LVar "x") (LVar "pref")) (LVar "suff"))
-    p3 = pair nil nil
-    -- Helper functions
-    nil = Const I.Unit
-    cons = Pair
-    pair = Pair
+    go list@(I.Pair x xs)
+      | x == item = (I.Unit, list)
+      | otherwise =
+         let (pref, suff) = go xs
+          in (I.Pair x pref, suff)
+    go I.Unit = (I.Unit, I.Unit)
+    go _ = error "splitAt: argument not a list"
+
+
+-- | Match suffix which satisfies the given predicate.
+suffix' :: (I.Item sym -> Bool) -> I.Item sym -> [I.Item sym]
+suffix' p xs
+  | p xs = xs : rest
+  | otherwise = rest
+  where
+    rest =
+      case xs of
+        I.Pair x xs' -> suffix' p xs'
+        I.Unit -> []
+        _ -> error "suffix: argument not a list"
+
+
+-- | Does the list end with dot?
+endsWithDot :: (Eq sym) => I.Item sym -> [I.Item sym]
+endsWithDot = suffix' $ \case
+  I.Pair I.Unit I.Unit -> True
+  _ -> False
 
 
 -- | TSG complete rule
@@ -101,14 +135,16 @@ complete =
   where
     leftP = item
       (rule (Var "A")
-        ( Via (splitAt dot)
+        -- ( Via (splitAt dot)
+        ( Via (AppArg "splitAtDot")
             (Pair (Var "alpha") (Pair dot (Pair (Var "B") (Var "beta"))))
         )
       )
       (span "i" "j")
     rightP = item
       (rule (Var "C")
-        (suffix $ Pair dot nil)
+        -- (suffix $ Pair dot nil)
+        (AppArg "endsWithDot")
       )
       (span "j" "k")
     condP = OrC
@@ -127,15 +163,6 @@ complete =
                 (Pred "internal" (Var "C"))
           )
       )
---     condP =
---       ( And
---           ( Eq (App "label" (Var "B"))
---                (App "label" (Var "C"))
---           )
---           ( And (Pred "leaf" (Var "B"))
---                 (Pred "root" (Var "C"))
---           )
---       )
     downP = item
       (rule (Var "A")
         ( App "append" $ Pair
@@ -162,7 +189,8 @@ predict =
   where
     leftP = item
       (rule Any
-        ( Via (splitAt dot)
+        -- ( Via (splitAt dot)
+        ( Via (AppArg "splitAtDot")
             (Pair Any (Pair dot (Pair (Var "B") Any)))
         )
       )
@@ -184,15 +212,6 @@ predict =
                 (Pred "internal" (Var "C"))
           )
       )
---     condP =
---       ( And
---           ( Eq (App "label" (Var "B"))
---                (App "label" (Var "C"))
---           )
---           ( And (Pred "leaf" (Var "B"))
---                 (Pred "root" (Var "C"))
---           )
---       )
     downP = item
       (Var "rule")
       (span "j" "j")
@@ -247,7 +266,7 @@ testTSG = do
   let cfgRules = S.fromList
         [ ("NP_1", ["N_2"])
         , ("NP_3", ["DET_4", "N_5"])
-        -- NB: "NP_28" is an internal node
+        -- NB: "NP_28" is an internal node (see below)
         , ("S_6", ["NP_28", "VP_8"])
         , ("VP_9", ["V_10"])
         , ("VP_11", ["V_12", "Adv_13"])
@@ -262,11 +281,15 @@ testTSG = do
         , ("Adv_27", ["quickly_7"])
         , ("NP_28", ["DET_29", "N_30"])
         ]
+--         [ ("NP_1", ["DET_2", "N_3"])
+--         , ("DET_2", ["a_3"])
+--         , ("N_4", ["dog_5"])
+--         ]
       label = \case
         I.Sym x ->
           case T.splitOn "_" x of
-            [term] -> [I.Sym term]
-            [nonTerm, _nodeId] -> [I.Sym nonTerm]
+            [term] -> I.Sym term
+            [nonTerm, _nodeId] -> I.Sym nonTerm
             _ -> error $ "label: unhandled symbol (" ++ T.unpack x ++ ")"
         x -> error $ "label: unhandled item (" ++ show x ++ ")"
 
@@ -298,7 +321,9 @@ testTSG = do
       cfgFunSet = P.emptyFunSet
         { P.funMap = M.fromList
             [ ("append", append)
-            , ("label", label)
+            , ("label", (:[]) . label)
+            , ("splitAtDot", splitAt I.Unit)  -- I.Unit represents dot
+            , ("endsWithDot", endsWithDot)
             ]
         , P.predMap = M.fromList
             [ ("leaf", leaf)
@@ -319,10 +344,10 @@ testTSG = do
         I.Union (Left (I.Pair _ (I.Pair i j)))
           | i == zero && j == slen -> True
         _ -> False
-  -- forM_ (S.toList baseItems) print
-  putStr "roots: " >> print roots
-  putStr "leafs: " >> print leafs
-  putStr "internals: " >> print internals
+--   forM_ (S.toList baseItems) print
+--   putStr "roots: " >> print roots
+--   putStr "leafs: " >> print leafs
+--   putStr "internals: " >> print internals
   chartParse cfgFunSet baseItems ruleMap isFinal >>= \case
     Nothing -> putStrLn "# No parse found"
     Just it -> print it 

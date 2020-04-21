@@ -40,9 +40,10 @@ module ParComp.Pattern
   , directRule
 
   -- * Indexing (locks and keys)
-  , Lock
+  , Lock (..)
   , Key
   , mkLock
+  , groupByTemplate
   , itemKeyFor
   , keyFor
   , locksFor
@@ -183,8 +184,8 @@ data Cond sym var lvar
 -- pattern with an item.
 --
 -- Assumption: In case of the `Or` pattern, we assume that both branches
--- contain the same set of global variables (however, this is not checked at
--- the moment).
+-- contain the same set of global variables (this is currently checked at
+-- runtime).
 globalVarsIn :: (Ord var) => Pattern sym var lvar -> Set.Set var
 globalVarsIn = \case
   Const _ -> Set.empty
@@ -197,13 +198,19 @@ globalVarsIn = \case
   Any -> Set.empty
   App _ p -> globalVarsIn p
   AppArg _ -> Set.empty
-  Or x y -> globalVarsIn x <> globalVarsIn y
+  Or x y ->
+    let xs = globalVarsIn x
+        ys = globalVarsIn y
+     in if xs == ys
+           then xs
+           else error "globalVarsIn: different sets of variables in Or"
   -- Below, ignore `x` and `y`, which should contain local variables only
   Let x e y -> globalVarsIn e
   Via p x -> globalVarsIn p <> globalVarsIn x
   Fix p -> globalVarsIn p
   Rec -> Set.empty
-  -- With p c -> globalVarsIn p <> globalVarsInC c
+  -- Below, we don't inspect the condition, since it doesn't bind additional
+  -- variables during matching
   With p _ -> globalVarsIn p
 
 
@@ -349,6 +356,20 @@ bindPatt p it = do
   case mayIt of
     Nothing -> S.modify' . modL penv $ M.insert p it
     Just it' -> guard $ it == it'
+
+
+-- | Match alternatives (one or both).
+-- TODO: elaborate.
+alt
+  :: (P.MonadIO m)
+  => MatchT sym var lvar m a
+  -> MatchT sym var lvar m a
+  -> MatchT sym var lvar m a
+alt m1 m2 = do
+  state <- S.get
+  m1 <|> do
+    S.put state
+    m2
 
 
 -- | Perform the given patter matching in a local environment, restoring the
@@ -510,10 +531,11 @@ match ms pt it =
       -- theory, it should not change between the first and the second branch
       -- of the `Or` pattern.  The same applies to local variables.  Perhaps
       -- this is something we could check dynamically, just in case?
-      state <- S.get
-      match ms p1 it <|> do
-        S.put state
-        match ms p2 it
+      match ms p1 it `alt` match ms p2 it
+--       state <- S.get
+--       match ms p1 it <|> do
+--         S.put state
+--         match ms p2 it
     (Let x e y, it) -> do
       it' <- match ms e it
       withLocalEnv $ do
@@ -531,6 +553,16 @@ match ms pt it =
     (With p c, it) -> do
       match ms p it
       check ms c >>= guard
+--       flag <- check ms c
+--       e <- S.gets $ getL penv
+--       P.liftIO $ do
+--         putStr "!!! Lazy check: "
+--         print c
+--         putStr "!!! Pattern env: "
+--         print e
+--         putStr "!!! Result: "
+--         print flag
+--       guard flag
       return it
     _ ->
       -- Fail otherwise
@@ -609,6 +641,7 @@ close p =
         return y
       AppArg fname -> error "close AppArg"
       Or p1 p2 ->
+        -- NB: `alt` is not necessary, because `close` doesn't modify the state
         close p1 <|> close p2
       Let x e y -> do
         it <- close e
@@ -748,7 +781,7 @@ check Lazy cond =
           return True
     And cx cy -> (&&) <$> check Lazy cx <*> check Lazy cy
     -- Similarly as in `getLockVarsC`, we take the alternative in case of `Or`
-    OrC cx cy -> check Lazy cx <|> check Lazy cy
+    OrC cx cy -> check Lazy cx `alt` check Lazy cy
     -- TODO: The line below is probably not correct; in case of Lazy matching,
     -- some embedded check may succeed simply because we can't tell yet if they
     -- succeed or not (see (*) above)
@@ -855,44 +888,9 @@ data Lock sym var lvar = Lock
   } deriving (Show, Eq, Ord)
 
 
--- | Key assigns values to the variables (and patterns) in the corresponding lock.
+-- | Key assigns values to the variables (and patterns) in the corresponding
+-- lock (in `lockVars`, more precisely).
 type Key sym var lvar = M.Map (Pattern sym var lvar) (I.Item sym)
-
-
--- -- | Variables bound in the given pattern
--- boundVars
---   :: (Monad m, Ord var)
---   => Pattern sym var lvar
---   -> MatchT sym var lvar m (Set.Set var)
--- boundVars p =
---   fmap (Set.fromList . catMaybes) $
---     forM (Set.toList $ globalVarsIn p) $ \v ->
---       lookupVar v >>= \case
---         Just _  -> pure $ Just v
---         Nothing -> pure Nothing
--- 
--- 
--- -- boundVars = \case
--- --   Const x -> pure Set.empty
--- --   Pair x y -> (<>) <$> boundVars x <*> boundVars y
--- --   Union up -> case up of
--- --     Left lp  -> boundVars lp
--- --     Right rp -> boundVars rp
--- --   Var v ->
--- --     lookupVar v >>= \case
--- --       Just it -> pure $ Set.singleton v
--- --       Nothing -> pure Set.empty
--- --   LVar v -> error "boundVars LVar"
--- --   Any -> pure Set.empty
--- --   App _ p -> boundVars p
--- --   Or x y -> (<>) <$> boundVars x <*> boundVars y
--- --   Let _ e _ -> boundVars e
--- --   Via p x -> (<>) <$> boundVars p <*> boundVars x
--- --   Fix p -> boundVars p
--- --   Rec -> pure Set.empty
--- --   -- NOTE: the condition should contain no separate variable?
--- --   With p _ -> error "boundVars With: not sure?"
--- --     -- boundVars p
 
 
 -- | Retrieve the bound variables and patterns for the lock.
@@ -954,8 +952,7 @@ getLockVarsC = \case
       True -> pure $ Set.singleton (With (Const I.Unit) (Pred pn p))
       False -> pure Set.empty
   And c1 c2 -> (<>) <$> getLockVarsC c1 <*> getLockVarsC c2
-  -- In case of `Or`, we take the alternative; TODO: This means that
-  -- `getLockVars` and `getLockVarsC` are non-deterministic.  Is this OK?
+  -- NB: `alt` is not necessary since `getLockVar` doesn't modify the state
   OrC c1 c2 -> getLockVarsC c1 <|> getLockVarsC c2
   Neg c -> getLockVarsC c
   TrueC -> pure Set.empty
@@ -1001,15 +998,71 @@ _locksFor funSet rule handler = do
       _ -> error "locksFor: doesn't handle non-binary rules"
 
 
--- | Retrieve the key(s) of the item for the given lock.
+-- -- | Retrieve the key(s) of the item for the given lock.
+-- itemKeyFor
+--   :: (P.MonadIO m, Ord sym, Ord var, Ord lvar, Show sym, Show var, Show lvar)
+--   => FunSet sym
+--   -> I.Item sym
+--   -> Lock sym var lvar
+--   -> P.ListT m (Key sym var lvar)
+-- itemKeyFor funSet item lock = do
+--   P.Select $ _itemKeyFor funSet item lock P.yield
+-- 
+-- 
+-- -- | Retrieve the key(s) of the item for the given lock.
+-- _itemKeyFor
+--   :: (P.MonadIO m, Ord sym, Ord var, Ord lvar, Show sym, Show var, Show lvar)
+--   => FunSet sym
+--   -> I.Item sym
+--   -> Lock sym var lvar
+--   -> (Key sym var lvar -> m ()) -- ^ Monadic key handler
+--   -> m ()
+-- _itemKeyFor funSet item lock handler = do
+--   runMatchT funSet $ do
+--     match Lazy (lockTemplate lock) item
+--     key <- keyFor lock
+--     lift $ handler key
+-- 
+-- 
+-- -- | Retrieve the values of the global variables in the lock, thus creating the
+-- -- key corresponding to the lock based on the current environment.
+-- keyFor
+--   :: (P.MonadIO m, Ord sym, Ord var, Ord lvar, Show sym, Show var, Show lvar)
+--   => Lock sym var lvar
+--   -> MatchT sym var lvar m (Key sym var lvar)
+-- keyFor lock = do
+--   let ps = Set.toList $ lockVars lock
+--   fmap M.fromList . forM ps $ \p -> do
+-- --     P.liftIO $ do
+-- --       putStr "%%% KEY_FOR: "
+-- --       print p
+--     it <- close p
+--     return (p, it)
+
+
+-- | Group the set of locks by their templates.  Each group in the output list
+-- will have the same `lockTemplate`.
+groupByTemplate 
+  :: (Ord sym, Ord var, Ord lvar)
+  => [Lock sym var lvar]
+  -> [[Lock sym var lvar]]
+groupByTemplate locks = M.elems . M.fromListWith (<>) $ do
+  lock <- locks
+  return (lockTemplate lock, [lock])
+
+
+-- | Retrieve the key(s) of the item for the given set of locks with the same
+-- template.
 itemKeyFor
   :: (P.MonadIO m, Ord sym, Ord var, Ord lvar, Show sym, Show var, Show lvar)
   => FunSet sym
   -> I.Item sym
-  -> Lock sym var lvar
-  -> P.ListT m (Key sym var lvar)
-itemKeyFor funSet item lock = do
-  P.Select $ _itemKeyFor funSet item lock P.yield
+  -> [Lock sym var lvar]
+  -> P.ListT m (Lock sym var lvar, Key sym var lvar)
+itemKeyFor funSet item lockGroup = do
+  P.Select $
+    _itemKeyFor funSet item lockGroup $
+      \lock key -> P.yield (lock, key)
 
 
 -- | Retrieve the key(s) of the item for the given lock.
@@ -1017,65 +1070,38 @@ _itemKeyFor
   :: (P.MonadIO m, Ord sym, Ord var, Ord lvar, Show sym, Show var, Show lvar)
   => FunSet sym
   -> I.Item sym
-  -> Lock sym var lvar
-  -> (Key sym var lvar -> m ()) -- ^ Monadic key handler
+  -> [Lock sym var lvar]
+  -> (Lock sym var lvar -> Key sym var lvar -> m ()) -- ^ Monadic key handler
   -> m ()
-_itemKeyFor funSet item lock handler = do
+_itemKeyFor funSet item lockGroup handler = do
   runMatchT funSet $ do
-    -- TODO: Since we ignore the item below (result of the match), it may be
-    -- that we will generate several keys which are identical.  This may be a
-    -- problem (or not) from the efficiency point of view, in particular.
-    _ <- match Lazy (lockTemplate lock) item
-    key <- keyFor lock
-    lift $ handler key
-
---   runMatchT funSet $ do
---     -- TODO: Since we ignore the item below (result of the match), it may be
---     -- that we will generate several keys which are identical.  This may be a
---     -- problem (or not) from the efficiency point of view.
---     _ <- match (lockTemplate lock) item
---     key <- S.gets (getL genv)
---     lift . handler $ M.restrictKeys key (lockVars lock)
-
-
--- -- | Retrieve the values of the global variables in the lock, thus creating the
--- -- key corresponding to the lock based on the current environment.
--- --
--- -- NOTE: in contrast with `itemKeyFor`, `keyFor` relies on the current
--- -- environment.
--- --
--- keyFor
---   :: (Monad m, Ord var)
---   => Lock sym var lvar
---   -> MatchT sym var lvar m (Key sym var)
--- keyFor lock = do
---   M.fromList <$> mapM
---     (\v -> (v,) <$> retrieveVar v)
---     (Set.toList $ globalVarsIn lock)
+    match Lazy groupTemplate item
+    forEach lockGroup $ \lock -> do
+      key <- keyFor $ lockVars lock
+      lift $ handler lock key
+  where
+    groupTemplate =
+      case Set.toList groupTemplates of
+        [template] -> template
+        xs -> error $
+          "itemKeyFor: expected one lock template, got " ++ show (length xs)
+    groupTemplates = Set.fromList $ do
+      lock <- lockGroup
+      return (lockTemplate lock)
 
 
 -- | Retrieve the values of the global variables in the lock, thus creating the
 -- key corresponding to the lock based on the current environment.
 keyFor
   :: (P.MonadIO m, Ord sym, Ord var, Ord lvar, Show sym, Show var, Show lvar)
-  => Lock sym var lvar
+  => Set.Set (Pattern sym var lvar)
+    -- ^ Lock variables
   -> MatchT sym var lvar m (Key sym var lvar)
-keyFor lock = do
-  let ps = Set.toList $ lockVars lock
+keyFor vars = do
+  let ps = Set.toList vars
   fmap M.fromList . forM ps $ \p -> do
---     P.liftIO $ do
---       putStr "%%% KEY_FOR: "
---       print p
     it <- close p
     return (p, it)
-
---   M.fromList . catMaybes <$> mapM getVar
---     (Set.toList $ lockVars lock)
---   where
---     getVar v = do
---       lookupVar v >>= \case
---         Nothing -> pure Nothing
---         Just it -> pure (Just (v, it))
 
 
 --------------------------------------------------

@@ -119,13 +119,12 @@ addToChart funSet x = do
 --     print x
   ST.modify' $ modL' chart (S.insert x)
   locks <- ST.gets $ M.keys . getL indexMap
-  forM_ locks $ \lock -> do
---     liftIO $ do
---       T.putStr ">>> Lock: "
---       print lock
+  forM_ (P.groupByTemplate locks) $ \lockGroup -> do
     Pipes.runListT $ do
-      key <- P.itemKeyFor funSet x lock
+      (lock, key) <- P.itemKeyFor funSet x lockGroup
 --       liftIO $ do
+--         T.putStr ">>> Lock: "
+--         print lock
 --         T.putStr ">>> Key: "
 --         print key
       lift $ saveKey lock key x
@@ -241,7 +240,7 @@ applyDirRule ruleName rule mainItem = do
 --       liftIO $ do
 --         T.putStr "@@@ Index: "
 --         print index
-      key <- P.keyFor lock
+      key <- P.keyFor $ P.lockVars lock
 --       liftIO $ do
 --         T.putStr "@@@ Key: "
 --         print key
@@ -292,13 +291,13 @@ chartParse funSet baseItems ruleMap isFinal =
     -- Register all the locks
     Pipes.runListT $ do
       rule <- each $ M.elems dirRuleMap
-      liftIO $ do
-        T.putStr "### Rule: "
-        print rule
+--       liftIO $ do
+--         T.putStr "### Rule: "
+--         print rule
       lock <- P.locksFor funSet rule
-      liftIO $ do
-        T.putStr "### Lock: "
-        print lock
+--       liftIO $ do
+--         T.putStr "### Lock: "
+--         print lock
       lift $ registerLock lock
 
     -- Put all base items to agenda
