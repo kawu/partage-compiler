@@ -159,7 +159,7 @@ data Pattern sym var lvar
 
 -- | Condition expression
 --
--- Note that condition expression should not contain no free variables, nor
+-- Note that condition expression should contain no free variables, nor
 -- wildcard patterns.  This is because side conditions are not matched against
 -- items.
 data Cond sym var lvar
@@ -739,8 +739,9 @@ closeableC = \case
 
 -- | Check the side condition expression. 
 --
--- NB: `check` does not modify the underlying state in case of `Strict`
--- matching.
+-- The `check` function does not modify the underlying state in case of
+-- `Strict` matching.  In case of `Lazy` matching, `check` may update the
+-- pattern binding envitonment (with `bindPatt`).
 check
   :: (P.MonadIO m, Ord sym, Ord var, Ord lvar, Show sym, Show var, Show lvar)
   => MatchingStrategy
@@ -785,9 +786,9 @@ check Lazy cond =
     -- Similarly as in `getLockVarsC`, we take the alternative in case of `Or`
     OrC cx cy -> check Lazy cx `alt` check Lazy cy
     -- NB: The line below (commented out) is probably incorrect. In case of
-    -- Lazy matching, some embedded check may succeed simply because we can't
-    -- tell yet if it succeeds or not (see (*) above).  Hence, negating the
-    -- embedded result doesn't make sense.
+    -- Lazy matching, some embedded check may succeed simply because we cannot
+    -- determine its status yet (see (*) above).  Hence, negating the embedded
+    -- result doesn't make sense.
     -- Neg c -> not <$> check Lazy c
     TrueC -> pure True
 
@@ -1111,7 +1112,7 @@ keyFor vars = do
 --------------------------------------------------
 
 
--- | TODO: add types
+-- | Lift the list to `P.ListT`.
 each :: (Monad m) => [a] -> P.ListT m a
 each = P.Select . P.each
 
@@ -1141,50 +1142,3 @@ pickOne (x:xs) =
 -- one of them succeeds. Returns the value of the succeeding action.
 choice :: Alternative f => [f a] -> f a
 choice = foldr (<|>) empty
-
-
---------------------------------------------------
--- TESTING
---------------------------------------------------
-
-
--- leftP :: Pattern sym T.Text
--- leftP = Pair
---   (Pair (Var "A") (Pair (Var "B") (Var "beta")))
---   (Pair (Var "i") (Var "j"))
---
---
--- rightP :: Pattern sym T.Text
--- rightP = Pair
---   (Pair (Var "B") (Const I.Unit))
---   (Pair (Var "j") (Var "k"))
---
---
--- -- | Primitive value
--- data Val
---   -- | > Integer
---   = VInt Int
---   -- | > String
---   | VStr T.Text
---   deriving (Show, Eq, Ord)
---
---
--- main :: IO ()
--- main = do
---   let triple x y z = I.Pair x (I.Pair y z)
---       str = I.Sym . VStr
---       int = I.Sym . VInt
---       rule hd bd = I.Pair
---         (str hd)
---         (I.list $ map str bd)
---       left = triple
---         (rule "NP" ["DET", "N"])
---         (int 1)
---         (int 2)
---       right = triple
---         (rule "DET" [])
---         (int 2)
---         (int 3)
---   print . evalMatch $ do
---     match leftP left
---     match rightP right
