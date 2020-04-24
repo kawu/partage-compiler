@@ -1067,7 +1067,7 @@ _itemKeyFor
   => FunSet sym
   -> I.Item sym
   -> [Lock sym var lvar]
-  -> (Lock sym var lvar -> Key sym var lvar -> m ()) -- ^ Monadic key handler
+  -> (Lock sym var lvar -> Key sym var lvar -> m ()) -- ^ Monadic handler
   -> m ()
 _itemKeyFor funSet item lockGroup handler = do
   runMatchT funSet $ do
