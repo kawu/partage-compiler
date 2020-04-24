@@ -4,12 +4,16 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
--- {-# LANGUAGE UndecidableInstances #-}
 
 
 module ParComp.ItemDev
   ( testPatt
+  , Pattern (..)
+  , Span
+  , Rule
+  , Sym
   -- ToItem (..)
   -- , testActive
   -- , testPatt
@@ -43,20 +47,6 @@ data Item expr cat where
   Pos   :: Int -> Item expr Int
   Head  :: T.Text -> Item expr Sym
   Body  :: [Maybe T.Text] -> Item expr [Sym]
---   Dot   :: Item expr Sym
---   Cons  :: expr Sym -> expr [Sym] -> Item expr [Sym]
---   Nil   :: Item expr [Sym]
-
-
--- deriving instance
---   (Show (expr [Sym]), Show (expr Sym), Show (expr Int), Show (expr Rule), Show (expr Span))
---     => (Show (Item expr cat))
--- deriving instance
---   (Eq (expr [Sym]), Eq (expr Sym), Eq (expr Int), Eq (expr Rule), Eq (expr Span))
---     => (Eq (Item expr cat))
--- deriving instance
---   (Ord (expr [Sym]), Ord (expr Sym), Ord (expr Int), Ord (expr Rule), Ord (expr Span))
---     => (Ord (Item expr cat))
 
 
 -- -- | Concrete active item (tying the knot)
@@ -64,12 +54,12 @@ data Item expr cat where
 --   deriving (Show, Eq, Ord)
 -- 
 -- instance ToItem (ItemI cat) where
---   encode (ItemI span) =
+--   encodeI (ItemI span) =
 --     case span of
---       Item r s  -> pair (encode r) (encode s)
+--       Item r s  -> pair (encodeI r) (encodeI s)
 --       Rule      -> unit
---       Span i j  -> pair (encode i) (encode j)
---       Pos i     -> encode i
+--       Span i j  -> pair (encodeI i) (encodeI j)
+--       Pos i     -> encodeI i
     
 
 --------------------------------------------------
@@ -85,37 +75,96 @@ data Pattern cat where
   O :: U.Op (Pattern cat) -> Pattern cat
 --   deriving (Show, Eq, Ord)
 
-
-instance U.ToPattern (Pattern cat) where
-  encodeP = \case
-    P x ->
-      case x of
-        Item r s    -> U.pairP (U.encodeP r) (U.encodeP s)
-        Rule hd bd  -> U.pairP (U.encodeP hd) (U.encodeP bd)
-        Span i j    -> U.pairP (U.encodeP i) (U.encodeP j)
-        Pos i       -> U.symP . T.pack . show $ i
-        Head x      -> U.encodeP x
-        Body xs     -> U.encodeP xs
-    O op -> U.encodeP op
+deriving instance (Show (Item Pattern cat))
+deriving instance (Show (Pattern cat))
+deriving instance (Eq (Item Pattern cat))
+deriving instance (Eq (Pattern cat))
+deriving instance (Ord (Item Pattern cat))
+deriving instance (Ord (Pattern cat))
 
 
 -- | Smart constructors
--- item r s    = P $ Item r s
--- rule hd bd  = P $ Rule hd bd
+item r s    = P $ Item r s
+rule hd bd  = P $ Rule hd bd
+hed x       = P $ Head x
+body xs     = P $ Body xs
 span i j    = P $ Span i j
 pos i       = P $ Pos i
 any         = O $ Any
 or x y      = O $ Or x y
 
 
+-- | TODO
+encodeWith
+  :: (U.ToPattern (Pattern cat))
+  => (Item Pattern cat -> U.Pattern)
+  -> Pattern cat
+  -> U.Pattern
+encodeWith enc = \case
+  P pt -> enc pt
+  O op -> U.encode op
+
+
+-- | TODO
+-- decodeWith
+--   :: (U.ToPattern (Pattern cat))
+--   => _ -- (U.Pattern -> Item Pattern cat)
+--   -> U.Pattern
+--   -> Pattern cat
+decodeWith dec = \case
+  U.P pt -> dec $ U.decode (U.P pt)
+  U.O op -> O $ U.decode (U.O op)
+
+
+-- Item
+instance U.ToPattern (Pattern ()) where
+  encode = encodeWith $ \case
+    Item r s -> U.encode (r, s)
+  decode = decodeWith $ uncurry item
+
+-- Span
+instance U.ToPattern (Pattern Span) where
+  encode = encodeWith $ \case
+    Span i j -> U.encode (i, j)
+  decode = decodeWith $ uncurry span
+
+-- Pos
+instance U.ToPattern (Pattern Int) where
+  encode = encodeWith $ \case
+    Pos i -> U.encode i
+  decode = decodeWith pos
+
+-- Rule
+instance U.ToPattern (Pattern Rule) where
+  encode = encodeWith $ \case
+    Rule hd bd -> U.encode (hd, bd)
+  decode = decodeWith $ uncurry rule
+
+-- Head
+instance U.ToPattern (Pattern Sym) where
+  encode = encodeWith $ \case
+    Head x -> U.encode x
+  decode = decodeWith hed
+
+-- Body
+instance U.ToPattern (Pattern [Sym]) where
+  encode = encodeWith $ \case
+    Body xs -> U.encode xs
+  decode = decodeWith body
+
+
 -- | Test pattern
+testPatt :: Pattern Rule
 testPatt =
-  testSpan
+  testRule
   where
---     testRule = rule
---       ()
---       ()
-    testSpan = 
+    testRule = rule
+      (hed "A")
+      testBody
+    testBody =
+      -- body [Just "B"]
+      (body [Nothing, Just "B"])
+    testSpan =
       span (pos 0) (pos 1 `or` pos 2) 
       `or`
       span (pos 1) any

@@ -62,31 +62,31 @@ newtype Rigit = I (Item Rigit)
 
 -- class ToItem t where
 --   -- | Encode a value as an item
---   encode :: t -> Rigit
+--   encodeI :: t -> Rigit
 -- 
 -- 
 -- instance ToItem () where
---   encode _ = unit
+--   encodeI _ = unit
 -- 
 -- instance ToItem Bool where
---   encode True  = sym "T"
---   encode False = sym "F"
+--   encodeI True  = sym "T"
+--   encodeI False = sym "F"
 -- 
 -- instance ToItem Int where
---   encode = sym . T.pack . show
+--   encodeI = sym . T.pack . show
 -- 
 -- instance ToItem T.Text where
---   encode = sym
+--   encodeI = sym
 -- 
 -- instance (ToItem a, ToItem b) => ToItem (a, b) where
---   encode (x, y) = pair (encode x) (encode y)
+--   encodeI (x, y) = pair (encodeI x) (encodeI y)
 -- 
 -- instance (ToItem a, ToItem b, ToItem c) => ToItem (a, b, c) where
---   encode (x, y, z) = pair (encode x) (pair (encode y) (encode z))
+--   encodeI (x, y, z) = pair (encodeI x) (pair (encodeI y) (encodeI z))
 -- 
 -- instance (ToItem a, ToItem b) => ToItem (Either a b) where
---   encode (Left x)  = left  $ encode x
---   encode (right y) = right $ encode y
+--   encodeI (Left x)  = left  $ encodeI x
+--   encodeI (right y) = right $ encodeI y
 
 
 --------------------------------------------------
@@ -133,77 +133,94 @@ rightP y   = P . Union $ Right y
 
 class ToPattern t where
   -- | Encode a value as a pattern
-  encodeP :: t -> Pattern
+  encode :: t -> Pattern
   -- | Decode a value from a pattern
-  decodeP :: Pattern -> t
+  decode :: Pattern -> t
 
 
 instance ToPattern () where
-  encodeP _ = unitP
-  decodeP _ = ()
+  encode _ = unitP
+  decode _ = ()
 
 instance ToPattern Bool where
-  encodeP = \case
+  encode = \case
     False -> leftP unitP
     True  -> rightP unitP
-  decodeP (P (Union u)) =
+  decode (P (Union u)) =
     case u of
       Left  _ -> False
       Right _ -> True
-  decodeP p =
+  decode p =
     error $ "cannot decode " ++ show p ++ " to Bool"
 
 instance ToPattern Int where
-  encodeP = symP . T.pack . show
-  decodeP (P (Sym x)) = read (T.unpack x)
-  decodeP p =
+  encode = symP . T.pack . show
+  decode (P (Sym x)) = read (T.unpack x)
+  decode p =
     error $ "cannot decode " ++ show p ++ " to Int"
 
 instance ToPattern T.Text where
-  encodeP = symP
-  decodeP (P (Sym x)) = x
-  decodeP p =
+  encode = symP
+  decode (P (Sym x)) = x
+  decode p =
     error $ "cannot decode " ++ show p ++ " to Text"
 
 instance (ToPattern a, ToPattern b) => ToPattern (a, b) where
-  encodeP (x, y) = pairP (encodeP x) (encodeP y)
-  decodeP (P (Pair x y)) = (decodeP x, decodeP y)
-  decodeP p =
+  encode (x, y) = pairP (encode x) (encode y)
+  decode (P (Pair x y)) = (decode x, decode y)
+  decode p =
     error $ "cannot decode " ++ show p ++ " to (,)"
 
 instance (ToPattern a, ToPattern b, ToPattern c) => ToPattern (a, b, c) where
-  encodeP (x, y, z) = pairP (encodeP x) (pairP (encodeP y) (encodeP z))
-  decodeP (P (Pair x (P (Pair y z)))) = (decodeP x, decodeP y, decodeP z)
-  decodeP p =
+  encode (x, y, z) = pairP (encode x) (pairP (encode y) (encode z))
+  decode (P (Pair x (P (Pair y z)))) = (decode x, decode y, decode z)
+  decode p =
     error $ "cannot decode " ++ show p ++ " to (,,)"
 
 instance (ToPattern a) => ToPattern (Maybe a) where
-  encodeP = \case
+  encode = \case
     Nothing -> leftP unitP
-    Just x -> rightP $ encodeP x
-  decodeP (P (Union u)) =
+    Just x -> rightP $ encode x
+  decode (P (Union u)) =
     case u of
       Left _ -> Nothing
-      Right x -> decodeP x
-  decodeP p =
+      Right x -> Just (decode x)
+  decode p =
     error $ "cannot decode " ++ show p ++ " to Maybe"
 
 instance (ToPattern a, ToPattern b) => ToPattern (Either a b) where
-  encodeP = \case
-    Left x  -> leftP  $ encodeP x
-    Right y -> rightP $ encodeP y
-  decodeP (P (Union u)) =
+  encode = \case
+    Left x  -> leftP  $ encode x
+    Right y -> rightP $ encode y
+  decode (P (Union u)) =
     case u of
-      Left x  -> Left  $ decodeP x
-      Right y -> Right $ decodeP y
+      Left x  -> Left  $ decode x
+      Right y -> Right $ decode y
+  decode p =
+    error $ "cannot decode " ++ show p ++ " to Either"
 
 instance (ToPattern a) => ToPattern [a] where
-  encodeP = \case
-    [] -> unitP
-    x : xs -> pairP (encodeP x) (encodeP xs)
+  encode = \case
+    x : xs  -> leftP $ pairP (encode x) (encode xs)
+    []      -> rightP unitP
+  decode (P (Union u)) =
+    case u of
+      Left p ->
+        let (x, xs) = decode p
+         in x : xs
+      Right _ -> []
+  decode p =
+    error $ "cannot decode " ++ show p ++ " to []"
+
 
 -- | Generic pattern operation encoding
 instance (ToPattern t) => ToPattern (Op t) where
-  encodeP = \case
-    Or x y -> O $ Or (encodeP x) (encodeP y)
+  encode = \case
+    Or x y -> O $ Or (encode x) (encode y)
     Any -> O Any
+  decode (O op) =
+    case op of
+      Or x y -> Or (decode x) (decode y)
+      Any -> Any
+  decode p =
+    error $ "cannot decode " ++ show p ++ " to Op"
