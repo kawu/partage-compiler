@@ -4,19 +4,74 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE FlexibleInstances #-}
+
+{-# LANGUAGE QuantifiedConstraints #-}
 
 
 module ParComp.ItemDev.Untyped
-  ( Item (..)
+  (
+
+  -- * Functions and predicates
+    Fun (..)
+
+--   -- * Registered functions
+--     FunSet (..)
+--   , FunName (..)
+--   , emptyFunSet
+
+  -- * Items and patterns
+  , Item (..)
+  , Rigit (..)
   , Pattern (..)
   , Op (..)
-  , IsPattern (..)
+  , Cond (..)
+  , strip
+  , clothe
 
   , unitP
   , symP
   , pairP
   , leftP
   , rightP
+
+  , orP
+  , viaP
+  , mapP
+  , labelP
+  , withP
+
+  , IsPattern (..)
+
+--   -- * Matching
+--   , MatchT
+--   , MatchingStrategy (..)
+--   , lift
+--   , forEach
+--   , runMatchT
+--   , match
+--   , close
+--   , check
+-- 
+--   -- * Rule
+--   , Rule (..)
+--   , apply
+--   -- ** Directional rule
+--   , DirRule (..)
+--   , directRule
+-- 
+--   -- * Indexing (locks and keys)
+--   , Lock (..)
+--   , Key
+--   , mkLock
+--   , groupByTemplate
+--   , itemKeyFor
+--   , keyFor
+--   , locksFor
+-- 
+--   -- * Utils
+--   , pickOne
   ) where
 
 
@@ -28,6 +83,7 @@ import qualified Pipes as P
 
 import           Data.Lens.Light
 
+import           Data.Void (Void)
 import           Data.String (IsString)
 import qualified Data.Text as T
 import qualified Data.Map.Strict as M
@@ -66,65 +122,60 @@ right y   = I . Union $ Right y
 --------------------------------------------------
 
 
--- class ToItem t where
+-- class IsItem t where
 --   -- | Encode a value as an item
 --   encodeI :: t -> Rigit
 -- 
 -- 
--- instance ToItem () where
+-- instance IsItem () where
 --   encodeI _ = unit
 -- 
--- instance ToItem Bool where
+-- instance IsItem Bool where
 --   encodeI True  = sym "T"
 --   encodeI False = sym "F"
 -- 
--- instance ToItem Int where
+-- instance IsItem Int where
 --   encodeI = sym . T.pack . show
 -- 
--- instance ToItem T.Text where
+-- instance IsItem T.Text where
 --   encodeI = sym
 -- 
--- instance (ToItem a, ToItem b) => ToItem (a, b) where
+-- instance (IsItem a, IsItem b) => IsItem (a, b) where
 --   encodeI (x, y) = pair (encodeI x) (encodeI y)
 -- 
--- instance (ToItem a, ToItem b, ToItem c) => ToItem (a, b, c) where
+-- instance (IsItem a, IsItem b, IsItem c) => IsItem (a, b, c) where
 --   encodeI (x, y, z) = pair (encodeI x) (pair (encodeI y) (encodeI z))
 -- 
--- instance (ToItem a, ToItem b) => ToItem (Either a b) where
+-- instance (IsItem a, IsItem b) => IsItem (Either a b) where
 --   encodeI (Left x)  = left  $ encodeI x
---   encodeI (right y) = right $ encodeI y
+--   encodeI (Right y) = right $ encodeI y
 
 
 --------------------------------------------------
--- Function register
+-- Functions and predicates
 --------------------------------------------------
 
 
--- | Function name
-newtype FunName = FunName {unFunName :: T.Text}
-  deriving (Show, Eq, Ord, IsString)
-
-
--- | Predicate name
-newtype PredName = PredName {unPredName :: T.Text}
-  deriving (Show, Eq, Ord, IsString)
-
-
--- | Record with registered grammar functions
---
--- Note that the registered functions can be multi-argument, since `Item`
--- allows to encode tuples.
-data FunSet = FunSet
-  { predMap :: M.Map PredName (Rigit -> Bool)
-    -- ^ Named predicate functions.
-  , funMap :: M.Map FunName (Rigit -> [Rigit])
-    -- ^ Named item expression functions
+-- | Named function
+data Fun a b = Fun
+  { fname :: T.Text
+    -- ^ The function's name
+  , fun   :: a -> b
+    -- ^ The function itself
   }
 
+instance Show (Fun a b) where
+  show Fun{..} = T.unpack fname
 
--- | Empty grammar
-emptyFunSet :: FunSet
-emptyFunSet = FunSet M.empty M.empty
+instance Eq (Fun a b) where
+  x == y = fname x == fname y
+
+instance Ord (Fun a b) where
+  x `compare` y = fname x `compare` fname y
+
+
+-- | Named predicate function
+type Pred a = Fun a Bool
 
 
 --------------------------------------------------
@@ -157,10 +208,10 @@ data Op t
   -- ^ Label: match any item expression and bind it to the given variable
   | Any
   -- ^ Any: match any item expression (wildcard pattern)
-  | Map FunName t
+  | Map (Fun Rigit [Rigit]) t
   -- ^ Mapping: match the pattern with the item and apply the function to the
   -- result.
-  | App FunName
+  | App (Fun Rigit [Rigit])
   -- ^ Application: apply the function to the item before pattern matching.
   | With t (Cond t)
   -- ^ With: pattern match and (then) check the condition
@@ -175,7 +226,7 @@ data Op t
 data Cond t
   = Eq t t
   -- ^ Check the equality between two patterns
-  | Pred PredName t
+  | Check (Pred Rigit) t
   -- ^ Check if the given predicate is satisfied
   | And (Cond t) (Cond t)
   -- ^ Logical conjunction
@@ -202,10 +253,22 @@ pairP x y   = P $ Pair x y
 leftP x     = P . Union $ Left x
 rightP y    = P . Union $ Right y
 
+viaP x y    = O $ Via x y
+orP x y     = O $ Or x y
 mapP fn x   = O $ Map fn x
 labelP v    = O $ Label v
 withP p x   = O $ With p x
--- predP n p   = C $ Pred n p
+
+
+-- | Convert the pattern to the corresponding item expression, in case it does
+-- not use any `Op`s (pattern specific operations/constructions).
+strip :: Pattern -> Rigit
+strip = undefined
+
+
+-- | The inverse of `strip`.
+clothe :: Rigit -> Pattern
+clothe = undefined
 
 
 --------------------------------------------------
@@ -294,17 +357,33 @@ instance (IsPattern a) => IsPattern [a] where
   decode p =
     error $ "cannot decode " ++ show p ++ " to []"
 
--- | Generic pattern operation encoding
-instance (IsPattern t) => IsPattern (Op t) where
-  encode = \case
-    Or x y -> O $ Or (encode x) (encode y)
-    Any -> O Any
-  decode (O op) =
-    case op of
-      Or x y -> Or (decode x) (decode y)
-      Any -> Any
-  decode p =
-    error $ "cannot decode " ++ show p ++ " to Op"
+-- -- | Generic pattern operation encoding
+-- instance (IsPattern t) => IsPattern (Op t) where
+--   encode = \case
+--     Or x y -> O $ Or (encode x) (encode y)
+--     Via x y -> O $ Via (encode x) (encode y)
+--     Label v -> O $ Label v
+--     Any -> O Any
+--     Map fn x -> O $ Map fn (encode x)
+--     App fn -> O $ App fn
+--     With p c -> O $ With (encode p) (encodeC c)
+--   decode (O op) =
+--     case op of
+--       Or x y -> Or (decode x) (decode y)
+--       Any -> Any
+--       _ -> error "Op decoding not implemented yet!"
+--   decode p =
+--     error $ "cannot decode " ++ show p ++ " to Op"
+--
+--
+-- -- | Encode the pattern condition
+-- encodeC :: IsPattern t => Cond t -> Cond Pattern
+-- encodeC = \case
+--   Eq x y    -> Eq (encode x) (encode y)
+--   Check p x -> Check p (encode x)
+--   And x y   -> And (encodeC x) (encodeC y)
+--   OrC x y   -> OrC (encodeC x) (encodeC y)
+--   TrueC     -> TrueC
 
 
 --------------------------------------------------
@@ -376,7 +455,8 @@ $( makeLenses [''PMState] )
 
 -- | Pattern matching monad transformer
 type MatchT m a =
-  P.ListT (RWS.RWST FunSet () PMState m) a
+--   P.ListT (RWS.RWST FunSet () PMState m) a
+  P.ListT (RWS.RWST () () PMState m) a
 
 
 -- | Lift the computation in the inner monad to `MatchT`.
@@ -405,11 +485,11 @@ forEach xs m = do
 -- predicates.
 runMatchT
   :: (Monad m)
-  => FunSet
-  -> MatchT m a
+--   => FunSet
+  => MatchT m a
   -> m ()
-runMatchT funSet m = void $
-  RWS.evalRWST (P.runListT m) funSet
+runMatchT m = void $
+  RWS.evalRWST (P.runListT m) ()  -- funSet
     (PMState M.empty M.empty Nothing M.empty)
 
 
@@ -545,40 +625,40 @@ fixed = do
     Just p  -> return p
 
 
--- | Retrieve the predicate with the given name.  The function with the name
--- must exist, otherwise `retrievePred` thorws an error (alternatively, the
--- pattern match could simplify fail, but that could lead to hard-to-find
--- errors in deduction rules).
-retrievePred
-  :: (Monad m)
-  => PredName
-  -> MatchT m (Rigit -> Bool)
-retrievePred predName = do
-  mayFun <- RWS.asks (M.lookup predName . predMap)
-  case mayFun of
-    Nothing -> error $ concat
-      [ "retrievePred: function with name '"
-      , T.unpack $ unPredName predName
-      , "' does not exist"
-      ]
-    Just fun -> return fun
+-- -- | Retrieve the predicate with the given name.  The function with the name
+-- -- must exist, otherwise `retrievePred` thorws an error (alternatively, the
+-- -- pattern match could simplify fail, but that could lead to hard-to-find
+-- -- errors in deduction rules).
+-- retrievePred
+--   :: (Monad m)
+--   => PredName
+--   -> MatchT m (Rigit -> Bool)
+-- retrievePred predName = do
+--   mayFun <- RWS.asks (M.lookup predName . predMap)
+--   case mayFun of
+--     Nothing -> error $ concat
+--       [ "retrievePred: function with name '"
+--       , T.unpack $ unPredName predName
+--       , "' does not exist"
+--       ]
+--     Just fun -> return fun
 
 
--- | Retrieve the symbol-level function with the given name.  The function with
--- the name must exist, otherwise `retrieveFun` thorws an error.
-retrieveFun
-  :: (Monad m)
-  => FunName
-  -> MatchT m (Rigit -> [Rigit])
-retrieveFun funName = do
-  mayFun <- RWS.asks (M.lookup funName . funMap)
-  case mayFun of
-    Nothing -> error $ concat
-      [ "retrieveFun: function with name '"
-      , T.unpack $ unFunName funName
-      , "' does not exist"
-      ]
-    Just fun -> return fun
+-- -- | Retrieve the symbol-level function with the given name.  The function with
+-- -- the name must exist, otherwise `retrieveFun` thorws an error.
+-- retrieveFun
+--   :: (Monad m)
+--   => FunName
+--   -> MatchT m (Rigit -> [Rigit])
+-- retrieveFun funName = do
+--   mayFun <- RWS.asks (M.lookup funName . funMap)
+--   case mayFun of
+--     Nothing -> error $ concat
+--       [ "retrieveFun: function with name '"
+--       , T.unpack $ unFunName funName
+--       , "' does not exist"
+--       ]
+--     Just fun -> return fun
 
 
 --------------------------------------------------
@@ -633,11 +713,12 @@ match ms (O op) it =
       return it
     (Any, _) ->
       return it
-    (Map fname p, it) -> do
-      f <- retrieveFun fname
+--     (Map fname p, it) -> do
+    (Map f p, it) -> do
+      -- f <- retrieveFun fname
       let strict = do
             x <- close p
-            it' <- each $ f x
+            it' <- each $ (fun f) x
             guard $ it' == it
             return it
       case ms of
@@ -648,9 +729,10 @@ match ms (O op) it =
             False -> do
               bindPatt p it
               return it
-    (App fname, it) -> do
-      f <- retrieveFun fname
-      each $ f it
+--     (App fname, it) -> do
+    (App f, it) -> do
+      -- f <- retrieveFun fname
+      each $ fun f it
     (Or p1 p2, it) -> do
       -- NOTE: we retrieve and then restore the entire state, even though the
       -- fixed recursive pattern should never escape its syntactic scope so, in
@@ -690,9 +772,9 @@ check Strict = \case
     x <- close px
     y <- close py
     guard $ x == y
-  Pred pname p -> do
-    flag <- retrievePred pname <*> close p
-    guard flag
+--   Pred pname p -> do
+--     flag <- retrievePred pname <*> close p
+--     guard flag
   And cx cy -> check Strict cx  >> check Strict cy
   OrC cx cy -> check Strict cx <|> check Strict cy
   TrueC -> pure ()
@@ -708,16 +790,16 @@ check Lazy = \case
       (True, False) -> bindPatt py =<< close px
       (False, True) -> bindPatt px =<< close py
       (False, False) -> error "check Lazy: both patterns not closeable"
-  Pred pname p -> do
-    pred <- retrievePred pname
-    closeable p >>= \case
-      True  -> do
-        flag <- pred <$> close p
-        guard flag
-      False -> do
-        -- NB: We bind the pattern (see also `getLockVarsC`) with the unit
-        -- value to indicate that the value of the condition is True.
-        bindPatt (withP unitP (Pred pname p)) unit
+--   Pred pname p -> do
+--     pred <- retrievePred pname
+--     closeable p >>= \case
+--       True  -> do
+--         flag <- pred <$> close p
+--         guard flag
+--       False -> do
+--         -- NB: We bind the pattern (see also `getLockVarsC`) with the unit
+--         -- value to indicate that the value of the condition is True.
+--         bindPatt (withP unitP (Pred pname p)) unit
   And cx cy -> check Lazy cx >> check Lazy cy
   -- NB: Below, `alt` is necessary since `check` can modify the state in case
   -- of lazy evaluation
@@ -748,6 +830,7 @@ dummyMatch p = do
 
 -- | Convert the pattern to the corresponding item expression.  This is only
 -- possible if the pattern contains no free variables nor wildcard patterns.
+-- See also `strip`.
 --
 -- Note that `close` should not modify the underlying state/environment.
 --
@@ -788,6 +871,7 @@ close p =
 --           Just it -> pure it
 --           Nothing -> error $ "close: Var not bound"
       Any -> empty
+      -- Fail in case of a wildcard pattern
 --       LVar v ->
 --         lookupLVar v >>= \case
 --           Just it -> pure it
@@ -795,11 +879,11 @@ close p =
 --           -- never happen
 --           Nothing -> error $ "close: LVar not bound"
 --           -- Nothing -> empty
-      -- Fail in case of a wildcard pattern
-      Map fname p -> do
-        f <- retrieveFun fname
+--       Map fname p -> do
+      Map f p -> do
+        -- f <- retrieveFun fname
         x <- close p
-        y <- each $ f x
+        y <- each $ fun f x
         return y
       App fname -> error "close App"
       Or p1 p2 ->
@@ -862,7 +946,7 @@ closeable (O op) = case op of
 closeableC :: (Monad m) => Cond Pattern -> MatchT m Bool
 closeableC = \case
   Eq px py -> (&&) <$> closeable py <*> closeable py
-  Pred _ p -> closeable p
+--   Pred _ p -> closeable p
   And cx cy -> (&&) <$> closeableC cx <*> closeableC cy
   -- TODO: what about the case below?
   OrC cx cy -> undefined
@@ -1007,12 +1091,12 @@ getLockVarsC = \case
       (True, False) -> pure $ S.singleton px
       (False, True) -> pure $ S.singleton py
       _ -> pure S.empty
-  Pred pn p ->
-    closeable p >>= \case
-      -- NB: Below, we cast the predicate to a `With` pattern.  This is because
-      -- currently the lock only supports patterns, and not conditions.
-      True -> pure $ S.singleton (withP unitP (Pred pn p))
-      False -> pure S.empty
+--   Pred pn p ->
+--     closeable p >>= \case
+--       -- NB: Below, we cast the predicate to a `With` pattern.  This is because
+--       -- currently the lock only supports patterns, and not conditions.
+--       True -> pure $ S.singleton (withP unitP (Pred pn p))
+--       False -> pure S.empty
   And c1 c2 -> (<>) <$> getLockVarsC c1 <*> getLockVarsC c2
   -- NB: `alt` is not necessary since `getLockVar` doesn't modify the state
   OrC c1 c2 -> getLockVarsC c1 <|> getLockVarsC c2
@@ -1027,26 +1111,19 @@ mkLock p = Lock p <$> getLockVars p
 
 
 -- | Generate all the locks for the given rule.
-locksFor
-  :: (P.MonadIO m)
-  => FunSet
-    -- ^ Set of registered functions
-  -> DirRule
-  -> P.ListT m Lock
-locksFor funSet rule  =
-  P.Select $ _locksFor funSet rule P.yield
+locksFor :: (P.MonadIO m) => DirRule -> P.ListT m Lock
+locksFor rule  =
+  P.Select $ _locksFor rule P.yield
 
 
 -- | Generate all the locks for the given rule.
 _locksFor
   :: (P.MonadIO m)
-  => FunSet
-    -- ^ Set of registered functions
-  -> DirRule
+  => DirRule
   -> (Lock -> m ())  -- ^ Monadic lock handler
   -> m ()
-_locksFor funSet rule handler = do
-  runMatchT funSet $ do
+_locksFor rule handler = do
+  runMatchT $ do
     -- forEach (pickOne (antecedents rule)) $ \(main, rest) -> do
     dummyMatch $ mainAnte rule
     case otherAntes rule of
@@ -1068,26 +1145,24 @@ groupByTemplate locks = M.elems . M.fromListWith (<>) $ do
 -- template.
 itemKeyFor
   :: (P.MonadIO m)
-  => FunSet
-  -> Rigit
+  => Rigit
   -> [Lock]
   -> P.ListT m (Lock, Key)
-itemKeyFor funSet item lockGroup = do
+itemKeyFor item lockGroup = do
   P.Select $
-    _itemKeyFor funSet item lockGroup $
+    _itemKeyFor item lockGroup $
       \lock key -> P.yield (lock, key)
 
 
 -- | Retrieve the key(s) of the item for the given lock.
 _itemKeyFor
   :: (P.MonadIO m)
-  => FunSet
-  -> Rigit
+  => Rigit
   -> [Lock]
   -> (Lock -> Key -> m ()) -- ^ Monadic handler
   -> m ()
-_itemKeyFor funSet item lockGroup handler = do
-  runMatchT funSet $ do
+_itemKeyFor item lockGroup handler = do
+  runMatchT $ do
     match Lazy groupTemplate item
     forEach lockGroup $ \lock -> do
       key <- keyFor $ lockVars lock
