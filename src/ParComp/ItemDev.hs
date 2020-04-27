@@ -96,7 +96,7 @@ or x y      = O $ Or x y
 
 -- | TODO
 encodeWith
-  :: (U.ToPattern (Pattern cat))
+  :: (U.IsPattern (Pattern cat))
   => (Item Pattern cat -> U.Pattern)
   -> Pattern cat
   -> U.Pattern
@@ -106,58 +106,61 @@ encodeWith enc = \case
 
 
 -- | TODO
--- decodeWith
---   :: (U.ToPattern (Pattern cat))
---   => _ -- (U.Pattern -> Item Pattern cat)
---   -> U.Pattern
---   -> Pattern cat
+decodeWith
+  :: (U.IsPattern t, U.IsPattern (Pattern cat))
+  => (t -> Pattern cat)
+  -> U.Pattern
+  -> Pattern cat
 decodeWith dec = \case
   U.P pt -> dec $ U.decode (U.P pt)
   U.O op -> O $ U.decode (U.O op)
 
 
 -- Item
-instance U.ToPattern (Pattern ()) where
+instance U.IsPattern (Pattern ()) where
   encode = encodeWith $ \case
     Item r s -> U.encode (r, s)
   decode = decodeWith $ uncurry item
 
 -- Span
-instance U.ToPattern (Pattern Span) where
+instance U.IsPattern (Pattern Span) where
   encode = encodeWith $ \case
     Span i j -> U.encode (i, j)
   decode = decodeWith $ uncurry span
 
 -- Pos
-instance U.ToPattern (Pattern Int) where
+instance U.IsPattern (Pattern Int) where
   encode = encodeWith $ \case
     Pos i -> U.encode i
   decode = decodeWith pos
 
 -- Rule
-instance U.ToPattern (Pattern Rule) where
+instance U.IsPattern (Pattern Rule) where
   encode = encodeWith $ \case
     Rule hd bd -> U.encode (hd, bd)
   decode = decodeWith $ uncurry rule
 
 -- Head
-instance U.ToPattern (Pattern Sym) where
+instance U.IsPattern (Pattern Sym) where
   encode = encodeWith $ \case
     Head x -> U.encode x
   decode = decodeWith hed
 
 -- Body
-instance U.ToPattern (Pattern [Sym]) where
+instance U.IsPattern (Pattern [Sym]) where
   encode = encodeWith $ \case
     Body xs -> U.encode xs
   decode = decodeWith body
 
 
 -- | Test pattern
-testPatt :: Pattern Rule
+testPatt :: Pattern ()
 testPatt =
-  testRule
+  testItem
   where
+    testItem = item
+      testRule
+      testSpan
     testRule = rule
       (hed "A")
       testBody
@@ -168,48 +171,3 @@ testPatt =
       span (pos 0) (pos 1 `or` pos 2) 
       `or`
       span (pos 1) any
-
-
--- --------------------------------------------------
--- -- Pattern (OLD)
--- --------------------------------------------------
--- 
--- 
--- -- -- | Pattern expression
--- -- data Pattern where
--- --   P       :: Item Pattern -> Pattern
--- --   Const   :: Rigit -> Pattern
--- --   Or      :: Pattern -> Pattern -> Pattern
--- --   deriving (Show, Eq, Ord)
--- -- 
--- -- 
--- -- -- | Some (not particularly) smart constructors
--- -- unit'      = P $ Unit
--- -- sym' x     = P $ Sym x
--- -- pair' x y  = P $ Pair x y
--- -- left' x    = P . Union $ Left x
--- -- right' y   = P . Union $ Right y
--- -- 
--- -- 
--- -- -- | Example item expression
--- -- testPatt =
--- --   p1 `Or` p2
--- --     where
--- --       p1 = left' $ pair' (sym' "symbol") (Const unit)
--- --       p2 = pair' unit' (unit' `Or` sym' "other")
--- 
--- 
--- -- -- | Pattern expression
--- -- data Pattern sym
--- --   -- | > Constant: match the given item expression
--- --   = Const (Item sym)
--- --   -- | > Pair: recursively match item pair
--- --   | Pair (Pattern sym) (Pattern sym)
--- --   -- | > Union: recursively match item union
--- --   | Union (Either (Pattern sym) (Pattern sym))
--- --   -- | > Any: match any item expression (wildcard)
--- --   | Any
--- --   -- | > Disjunction: match items which match either of the two patterns.
--- --   -- `Or` provides non-determinism in pattern matching.
--- --   | Or (Pattern sym) (Pattern sym)
--- --   deriving (Show, Eq, Ord)
