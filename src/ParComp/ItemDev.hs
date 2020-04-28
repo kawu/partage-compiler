@@ -16,41 +16,21 @@ module ParComp.ItemDev
   ) where
 
 
-import           Prelude hiding (span, any, or)
-
--- import           Control.Applicative (Const(..))
+import           Prelude hiding (span, any, or, map, const)
+import qualified Prelude as P
 
 import qualified Data.Text as T
 
 import qualified ParComp.ItemDev.Untyped as U
 -- import           ParComp.ItemDev.Untyped
 --   (Op(..), TyOr(..), TyVia(..), TyApp(..))
+import qualified ParComp.ItemDev.Typed as Ty
+import           ParComp.ItemDev.Typed (Pattern(..), Op(..))
 
 
 --------------------------------------------------
 -- Concerete item
 --------------------------------------------------
-
-
-class Op repr where
-  or    :: repr a b -> repr a b -> repr a b
-  via   :: repr a b -> repr b c -> repr a c
-  omap  :: (U.IsPattern b, U.IsPattern c) => U.Fun b c -> repr a b -> repr a c
-
-
--- | Constant on the first parameter
-newtype Const2 a b c =
-  Const2 {unConst2 :: a}
-  deriving (Show, Eq, Ord)
-
-
-instance Op (Const2 U.Pattern) where
-  or    (Const2 x) (Const2 y) = Const2 (U.orP x y)
-  via   (Const2 x) (Const2 y) = Const2 (U.viaP x y)
-  omap  f (Const2 x) = Const2 $
-    let fun' = (:[]) . U.strip . U.encode . U.fun f . U.decode . U.clothe
-        g = U.Fun {fname = U.fname f, fun = fun'}
-     in U.mapP g x
 
 
 -- | Item expression categories
@@ -79,26 +59,26 @@ class Item repr where
   rbody :: [Maybe T.Text] -> repr [Sym] [Maybe T.Text]
 
 
-instance Item (Const2 U.Pattern) where
-  item (Const2 r) (Const2 s) = Const2 (U.pairP r s)
-  span (Const2 x) (Const2 y) = Const2 (U.pairP x y)
-  rule (Const2 h) (Const2 b) = Const2 (U.pairP h b)
-  pos i   = Const2 $ U.encode i
-  rhead x = Const2 $ U.encode x
-  rbody x = Const2 $ U.encode x
+instance Item Pattern where
+  item (Patt r) (Patt s) = Patt (U.pairP r s)
+  span (Patt x) (Patt y) = Patt (U.pairP x y)
+  rule (Patt h) (Patt b) = Patt (U.pairP h b)
+  pos i   = Patt $ U.encodeP i
+  rhead x = Patt $ U.encodeP x
+  rbody x = Patt $ U.encodeP x
 
 
 -- testPatt :: (Item repr, Op repr) => repr Span ()
-testPatt :: Const2 U.Pattern Active ()
-testPatt = 
-  omap constUnit testItem
+testPatt :: Pattern Active ()
+testPatt =
+  map constUnit testItem
   where
-    testItem = item testRule testSpan 
+    testItem = item testRule testSpan
     testRule = rule
       (rhead "A")
       (rbody [Nothing, Just "B"] `or` rbody [Nothing])
     testSpan = span (pos 1 `or` pos 2) (pos 3)
-    constUnit = U.Fun "constUnit" (const ())
+    constUnit = U.Fun "constUnit" (P.const [()])
 
 
 -- deriving instance (Show (Item down up))

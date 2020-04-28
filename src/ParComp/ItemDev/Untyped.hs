@@ -13,8 +13,10 @@
 module ParComp.ItemDev.Untyped
   (
 
-  -- * Functions and predicates
+  -- * Core types
     Fun (..)
+  , Pred
+  , Var (..)
 
 --   -- * Registered functions
 --     FunSet (..)
@@ -27,9 +29,17 @@ module ParComp.ItemDev.Untyped
   , Pattern (..)
   , Op (..)
   , Cond (..)
-  , strip
-  , clothe
 
+  , strip
+
+  -- ** IsPatt class
+  , IsPatt (..)
+  , encodeI
+  , decodeI
+  , encodeP
+  , decodeP
+
+  -- ** Smart constructors
   , unitP
   , symP
   , pairP
@@ -38,40 +48,40 @@ module ParComp.ItemDev.Untyped
 
   , orP
   , viaP
+  , appP
   , mapP
   , labelP
+  , anyP
   , withP
 
-  , IsPattern (..)
+  -- * Matching
+  , MatchT
+  , MatchingStrategy (..)
+  , lift
+  , forEach
+  , runMatchT
+  , match
+  , close
+  , check
 
---   -- * Matching
---   , MatchT
---   , MatchingStrategy (..)
---   , lift
---   , forEach
---   , runMatchT
---   , match
---   , close
---   , check
--- 
---   -- * Rule
---   , Rule (..)
---   , apply
---   -- ** Directional rule
---   , DirRule (..)
---   , directRule
--- 
---   -- * Indexing (locks and keys)
---   , Lock (..)
---   , Key
---   , mkLock
---   , groupByTemplate
---   , itemKeyFor
---   , keyFor
---   , locksFor
--- 
---   -- * Utils
---   , pickOne
+  -- * Rule
+  , Rule (..)
+  , apply
+  -- ** Directional rule
+  , DirRule (..)
+  , directRule
+
+  -- * Indexing (locks and keys)
+  , Lock (..)
+  , Key
+  , mkLock
+  , groupByTemplate
+  , itemKeyFor
+  , keyFor
+  , locksFor
+
+  -- * Utils
+  , pickOne
   ) where
 
 
@@ -105,8 +115,13 @@ data Item expr where
 
 
 -- | Rigid item expression
-newtype Rigit = I {unI :: Item Rigit}
+newtype Rigit = I (Item Rigit)
   deriving (Show, Eq, Ord)
+
+
+-- | Extract the rigit item.
+unI :: Rigit -> Item Rigit
+unI (I x) = x
 
 
 -- | Rigit constructors
@@ -118,40 +133,6 @@ right y   = I . Union $ Right y
 
 
 --------------------------------------------------
--- Encoding items
---------------------------------------------------
-
-
--- class IsItem t where
---   -- | Encode a value as an item
---   encodeI :: t -> Rigit
--- 
--- 
--- instance IsItem () where
---   encodeI _ = unit
--- 
--- instance IsItem Bool where
---   encodeI True  = sym "T"
---   encodeI False = sym "F"
--- 
--- instance IsItem Int where
---   encodeI = sym . T.pack . show
--- 
--- instance IsItem T.Text where
---   encodeI = sym
--- 
--- instance (IsItem a, IsItem b) => IsItem (a, b) where
---   encodeI (x, y) = pair (encodeI x) (encodeI y)
--- 
--- instance (IsItem a, IsItem b, IsItem c) => IsItem (a, b, c) where
---   encodeI (x, y, z) = pair (encodeI x) (pair (encodeI y) (encodeI z))
--- 
--- instance (IsItem a, IsItem b) => IsItem (Either a b) where
---   encodeI (Left x)  = left  $ encodeI x
---   encodeI (Right y) = right $ encodeI y
-
-
---------------------------------------------------
 -- Functions and predicates
 --------------------------------------------------
 
@@ -160,8 +141,8 @@ right y   = I . Union $ Right y
 data Fun a b = Fun
   { fname :: T.Text
     -- ^ The function's name
-  , fun   :: a -> b
-    -- ^ The function itself
+  , fun   :: a -> [b]
+    -- ^ The function itself (non-deterministic)
   }
 
 instance Show (Fun a b) where
@@ -174,8 +155,22 @@ instance Ord (Fun a b) where
   x `compare` y = fname x `compare` fname y
 
 
--- | Named predicate function
-type Pred a = Fun a Bool
+-- | Named function
+data Pred a = Pred
+  { pname :: T.Text
+    -- ^ The predicate's name
+  , pred  :: a -> Bool
+    -- ^ The predicate itself
+  }
+
+instance Show (Pred a) where
+  show Pred{..} = T.unpack pname
+
+instance Eq (Pred a) where
+  x == y = pname x == pname y
+
+instance Ord (Pred a) where
+  x `compare` y = pname x `compare` pname y
 
 
 --------------------------------------------------
@@ -184,8 +179,13 @@ type Pred a = Fun a Bool
 
 
 -- | Variable
-newtype Var = Var {unVar :: T.Text}
+newtype Var = Var T.Text
   deriving (Show, Eq, Ord)
+
+
+-- | Extract the variable.
+unVar :: Var -> T.Text
+unVar (Var x) = x
 
 
 -- | Local variable name
@@ -208,10 +208,10 @@ data Op t
   -- ^ Label: match any item expression and bind it to the given variable
   | Any
   -- ^ Any: match any item expression (wildcard pattern)
-  | Map (Fun Rigit [Rigit]) t
+  | Map (Fun Rigit Rigit) t
   -- ^ Mapping: match the pattern with the item and apply the function to the
   -- result.
-  | App (Fun Rigit [Rigit])
+  | App (Fun Rigit Rigit)
   -- ^ Application: apply the function to the item before pattern matching.
   | With t (Cond t)
   -- ^ With: pattern match and (then) check the condition
@@ -255,135 +255,254 @@ rightP y    = P . Union $ Right y
 
 viaP x y    = O $ Via x y
 orP x y     = O $ Or x y
-mapP fn x   = O $ Map fn x
+appP f      = O $ App f
+mapP f x    = O $ Map f x
 labelP v    = O $ Label v
-withP p x   = O $ With p x
+anyP        = O $ Any
+withP p c   = O $ With p c
 
 
 -- | Convert the pattern to the corresponding item expression, in case it does
 -- not use any `Op`s (pattern specific operations/constructions).
 strip :: Pattern -> Rigit
-strip = undefined
+strip = \case
+  P ip -> case ip of
+    Unit  -> unit
+    Sym x -> sym x
+    Pair x y -> pair (strip x) (strip y)
+    Union u -> case u of
+      Left x  -> left  $ strip x
+      Right y -> right $ strip y
+  O op -> error $ "cannot strip pattern with Op: " ++ show (O op)
 
 
--- | The inverse of `strip`.
-clothe :: Rigit -> Pattern
-clothe = undefined
+-- -- | The inverse of `strip`.
+-- clothe :: Rigit -> Pattern
+-- clothe = undefined
 
 
 --------------------------------------------------
--- Encoding
+-- Item/pattern encoding
 --------------------------------------------------
 
 
-class IsPattern t where
-  -- | Encode a value as a pattern
-  encode :: t -> Pattern
-  -- | Decode a value from a pattern
-  decode :: Pattern -> t
+class IsPatt t where
+  -- | Encode a value as an item
+  encode :: (Item p -> p) -> t -> p
+  -- | Decode a value from an item
+  decode :: (Show p) => (p -> Item p) -> p -> t
 
 
-instance IsPattern () where
-  encode _ = unitP
-  decode _ = ()
+-- | Encode a value as a `Rigit`. 
+encodeI :: IsPatt t => t -> Rigit
+encodeI = encode I
 
-instance IsPattern Bool where
-  encode = \case
-    False -> leftP unitP
-    True  -> rightP unitP
-  decode (P (Union u)) =
-    case u of
-      Left  _ -> False
-      Right _ -> True
-  decode p =
-    error $ "cannot decode " ++ show p ++ " to Bool"
 
-instance IsPattern Int where
-  encode = symP . T.pack . show
-  decode (P (Sym x)) = read (T.unpack x)
-  decode p =
-    error $ "cannot decode " ++ show p ++ " to Int"
+-- | Decode a value from a `Rigit`.
+decodeI :: IsPatt t => Rigit -> t
+decodeI = decode unI
 
-instance IsPattern T.Text where
-  encode = symP
-  decode (P (Sym x)) = x
-  decode p =
-    error $ "cannot decode " ++ show p ++ " to Text"
 
-instance (IsPattern a, IsPattern b) => IsPattern (a, b) where
-  encode (x, y) = pairP (encode x) (encode y)
-  decode (P (Pair x y)) = (decode x, decode y)
-  decode p =
-    error $ "cannot decode " ++ show p ++ " to (,)"
+-- | Encode a value as a `Pattern`. 
+encodeP :: IsPatt t => t -> Pattern
+encodeP = encode P
 
-instance (IsPattern a, IsPattern b, IsPattern c) => IsPattern (a, b, c) where
-  encode (x, y, z) = pairP (encode x) (pairP (encode y) (encode z))
-  decode (P (Pair x (P (Pair y z)))) = (decode x, decode y, decode z)
-  decode p =
-    error $ "cannot decode " ++ show p ++ " to (,,)"
 
-instance (IsPattern a) => IsPattern (Maybe a) where
-  encode = \case
-    Nothing -> leftP unitP
-    Just x -> rightP $ encode x
-  decode (P (Union u)) =
-    case u of
-      Left _ -> Nothing
-      Right x -> Just (decode x)
-  decode p =
-    error $ "cannot decode " ++ show p ++ " to Maybe"
+-- | Decode a value from a `Pattern`.
+decodeP :: IsPatt t => Pattern -> t
+decodeP = decode $ \case
+  P x -> x
+  O _ -> error "decodeP: cannot decode O"
 
-instance (IsPattern a, IsPattern b) => IsPattern (Either a b) where
-  encode = \case
-    Left x  -> leftP  $ encode x
-    Right y -> rightP $ encode y
-  decode (P (Union u)) =
-    case u of
-      Left x  -> Left  $ decode x
-      Right y -> Right $ decode y
-  decode p =
-    error $ "cannot decode " ++ show p ++ " to Either"
 
-instance (IsPattern a) => IsPattern [a] where
-  encode = \case
-    x : xs  -> leftP $ pairP (encode x) (encode xs)
-    []      -> rightP unitP
-  decode (P (Union u)) =
-    case u of
-      Left p ->
-        let (x, xs) = decode p
+instance IsPatt () where
+  encode mkP _ = mkP Unit
+  decode unP _ = ()
+
+instance IsPatt Bool where
+  encode mkP = \case
+    False -> mkP . Union . Left  $ mkP Unit
+    True  -> mkP . Union . Right $ mkP Unit
+  decode unP x =
+    case unP x of
+      Union u -> case u of
+        Left  _ -> False
+        Right _ -> True
+      _ -> error $ "cannot decode " ++ show x ++ " to Bool"
+
+instance IsPatt Int where
+  encode mkP = mkP . Sym . T.pack . show
+  decode unP p = case unP p of
+    Sym x -> read (T.unpack x)
+    _ -> error $ "cannot decode " ++ show p ++ " to Int"
+
+instance IsPatt T.Text where
+  encode mkP = mkP . Sym
+  decode unP p = case unP p of
+    Sym x -> x
+    _ -> error $ "cannot decode " ++ show p ++ " to Text"
+
+instance (IsPatt a, IsPatt b) => IsPatt (a, b) where
+  encode mkP (x, y) = mkP $ Pair (encode mkP x) (encode mkP y)
+  decode unP p = case unP p of
+    Pair x y -> (decode unP x, decode unP y)
+    _ -> error $ "cannot decode " ++ show p ++ " to (,)"
+
+instance (IsPatt a, IsPatt b, IsPatt c) => IsPatt (a, b, c) where
+  encode mkP (x, y, z) =
+    mkP $ Pair (encode mkP x) (mkP $ Pair (encode mkP y) (encode mkP z))
+  decode unP p = case unP p of
+    Pair x p' -> case unP p' of
+      Pair y z -> (decode unP x, decode unP y, decode unP z)
+    _ -> error $ "cannot decode " ++ show p ++ " to (,,)"
+
+instance (IsPatt a) => IsPatt (Maybe a) where
+  encode mkP = \case
+    Nothing -> mkP . Union . Left  $ mkP Unit
+    Just x  -> mkP . Union . Right $ encode mkP x
+  decode unP p = case unP p of
+    Union u -> case u of
+      Left _  -> Nothing
+      Right x -> Just (decode unP x)
+    _ -> error $ "cannot decode " ++ show p ++ " to Maybe"
+
+instance (IsPatt a, IsPatt b) => IsPatt (Either a b) where
+  encode mkP = \case
+    Left x  -> mkP . Union . Left  $ encode mkP x
+    Right y -> mkP . Union . Right $ encode mkP y
+  decode unP p = case unP p of
+    Union u -> case u of
+      Left x  -> Left  $ decode unP x
+      Right y -> Right $ decode unP y
+    _ -> error $ "cannot decode " ++ show p ++ " to Either"
+
+instance (IsPatt a) => IsPatt [a] where
+  encode mkP = \case
+    []      -> mkP . Union . Left  $ mkP Unit
+    x : xs  -> mkP . Union . Right $
+      mkP $ Pair (encode mkP x) (encode mkP xs)
+  decode unP p = case unP p of
+    Union u -> case u of
+      Left _ -> []
+      Right p' ->
+        let (x, xs) = decode unP p'
          in x : xs
-      Right _ -> []
-  decode p =
-    error $ "cannot decode " ++ show p ++ " to []"
+    _ -> error $ "cannot decode " ++ show p ++ " to []"
 
--- -- | Generic pattern operation encoding
--- instance (IsPattern t) => IsPattern (Op t) where
+
+--------------------------------------------------
+-- Encoding patterns
+--------------------------------------------------
+
+
+-- class IsPattern t where
+--   -- | Encode a value as a pattern
+--   encode :: t -> Pattern
+--   -- | Decode a value from a pattern
+--   decode :: Pattern -> t
+-- 
+-- 
+-- instance IsPattern () where
+--   encode _ = unitP
+--   decode _ = ()
+-- 
+-- instance IsPattern Bool where
 --   encode = \case
---     Or x y -> O $ Or (encode x) (encode y)
---     Via x y -> O $ Via (encode x) (encode y)
---     Label v -> O $ Label v
---     Any -> O Any
---     Map fn x -> O $ Map fn (encode x)
---     App fn -> O $ App fn
---     With p c -> O $ With (encode p) (encodeC c)
---   decode (O op) =
---     case op of
---       Or x y -> Or (decode x) (decode y)
---       Any -> Any
---       _ -> error "Op decoding not implemented yet!"
+--     False -> leftP unitP
+--     True  -> rightP unitP
+--   decode (P (Union u)) =
+--     case u of
+--       Left  _ -> False
+--       Right _ -> True
 --   decode p =
---     error $ "cannot decode " ++ show p ++ " to Op"
---
---
--- -- | Encode the pattern condition
--- encodeC :: IsPattern t => Cond t -> Cond Pattern
--- encodeC = \case
---   Eq x y    -> Eq (encode x) (encode y)
---   Check p x -> Check p (encode x)
---   And x y   -> And (encodeC x) (encodeC y)
---   OrC x y   -> OrC (encodeC x) (encodeC y)
---   TrueC     -> TrueC
+--     error $ "cannot decode " ++ show p ++ " to Bool"
+-- 
+-- instance IsPattern Int where
+--   encode = symP . T.pack . show
+--   decode (P (Sym x)) = read (T.unpack x)
+--   decode p =
+--     error $ "cannot decode " ++ show p ++ " to Int"
+-- 
+-- instance IsPattern T.Text where
+--   encode = symP
+--   decode (P (Sym x)) = x
+--   decode p =
+--     error $ "cannot decode " ++ show p ++ " to Text"
+-- 
+-- instance (IsPattern a, IsPattern b) => IsPattern (a, b) where
+--   encode (x, y) = pairP (encode x) (encode y)
+--   decode (P (Pair x y)) = (decode x, decode y)
+--   decode p =
+--     error $ "cannot decode " ++ show p ++ " to (,)"
+-- 
+-- instance (IsPattern a, IsPattern b, IsPattern c) => IsPattern (a, b, c) where
+--   encode (x, y, z) = pairP (encode x) (pairP (encode y) (encode z))
+--   decode (P (Pair x (P (Pair y z)))) = (decode x, decode y, decode z)
+--   decode p =
+--     error $ "cannot decode " ++ show p ++ " to (,,)"
+-- 
+-- instance (IsPattern a) => IsPattern (Maybe a) where
+--   encode = \case
+--     Nothing -> leftP unitP
+--     Just x -> rightP $ encode x
+--   decode (P (Union u)) =
+--     case u of
+--       Left _ -> Nothing
+--       Right x -> Just (decode x)
+--   decode p =
+--     error $ "cannot decode " ++ show p ++ " to Maybe"
+-- 
+-- instance (IsPattern a, IsPattern b) => IsPattern (Either a b) where
+--   encode = \case
+--     Left x  -> leftP  $ encode x
+--     Right y -> rightP $ encode y
+--   decode (P (Union u)) =
+--     case u of
+--       Left x  -> Left  $ decode x
+--       Right y -> Right $ decode y
+--   decode p =
+--     error $ "cannot decode " ++ show p ++ " to Either"
+-- 
+-- instance (IsPattern a) => IsPattern [a] where
+--   encode = \case
+--     x : xs  -> leftP $ pairP (encode x) (encode xs)
+--     []      -> rightP unitP
+--   decode (P (Union u)) =
+--     case u of
+--       Left p ->
+--         let (x, xs) = decode p
+--          in x : xs
+--       Right _ -> []
+--   decode p =
+--     error $ "cannot decode " ++ show p ++ " to []"
+-- 
+-- -- -- | Generic pattern operation encoding
+-- -- instance (IsPattern t) => IsPattern (Op t) where
+-- --   encode = \case
+-- --     Or x y -> O $ Or (encode x) (encode y)
+-- --     Via x y -> O $ Via (encode x) (encode y)
+-- --     Label v -> O $ Label v
+-- --     Any -> O Any
+-- --     Map fn x -> O $ Map fn (encode x)
+-- --     App fn -> O $ App fn
+-- --     With p c -> O $ With (encode p) (encodeC c)
+-- --   decode (O op) =
+-- --     case op of
+-- --       Or x y -> Or (decode x) (decode y)
+-- --       Any -> Any
+-- --       _ -> error "Op decoding not implemented yet!"
+-- --   decode p =
+-- --     error $ "cannot decode " ++ show p ++ " to Op"
+-- --
+-- --
+-- -- -- | Encode the pattern condition
+-- -- encodeC :: IsPattern t => Cond t -> Cond Pattern
+-- -- encodeC = \case
+-- --   Eq x y    -> Eq (encode x) (encode y)
+-- --   Check p x -> Check p (encode x)
+-- --   And x y   -> And (encodeC x) (encodeC y)
+-- --   OrC x y   -> OrC (encodeC x) (encodeC y)
+-- --   TrueC     -> TrueC
 
 
 --------------------------------------------------
@@ -706,6 +825,7 @@ match ms (P ip) (I it) =
           right <$> match ms pr ir
         -- Fail otherwise
         _ -> empty
+    _ -> error $ "match fail: " ++ show (ip, it)
 match ms (O op) it =
   case (op, it) of
     (Label x, _) -> do
@@ -742,6 +862,12 @@ match ms (O op) it =
       match ms p1 it `alt` match ms p2 it
     (Via p x, it) -> do
       it' <- match ms p it
+--       P.liftIO $ do
+--         putStrLn "!!! Matching Via"
+--         putStr "p: " >> print p
+--         putStr "x: " >> print x
+--         putStr "it: " >> print it
+--         putStr "it': " >> print it'
       match ms x it'
     (With p c, it) -> do
       match ms p it
@@ -1163,7 +1289,11 @@ _itemKeyFor
   -> m ()
 _itemKeyFor item lockGroup handler = do
   runMatchT $ do
+--     P.liftIO $ do
+--       putStrLn "??? Matching START"
     match Lazy groupTemplate item
+--     P.liftIO $ do
+--       putStrLn "??? Matching END"
     forEach lockGroup $ \lock -> do
       key <- keyFor $ lockVars lock
       lift $ handler lock key
@@ -1188,7 +1318,15 @@ keyFor
 keyFor vars = do
   let ps = S.toList vars
   fmap M.fromList . forM ps $ \p -> do
+--     P.liftIO $ do
+--       putStr ">>> Closing "
+--       print p
     it <- close p
+--     P.liftIO $ do
+--       putStr ">>> Closed "
+--       print p
+--       putStr ">>> With "
+--       print it
     return (p, it)
 
 
