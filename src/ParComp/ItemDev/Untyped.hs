@@ -141,7 +141,7 @@ right y   = I . Union $ Right y
 data Fun a b = Fun
   { fname :: T.Text
     -- ^ The function's name
-  , fun   :: a -> [b]
+  , fbody :: a -> [b]
     -- ^ The function itself (non-deterministic)
   }
 
@@ -838,7 +838,7 @@ match ms (O op) it =
       -- f <- retrieveFun fname
       let strict = do
             x <- close p
-            it' <- each $ (fun f) x
+            it' <- each $ (fbody f) x
             guard $ it' == it
             return it
       case ms of
@@ -852,7 +852,7 @@ match ms (O op) it =
 --     (App fname, it) -> do
     (App f, it) -> do
       -- f <- retrieveFun fname
-      each $ fun f it
+      each $ fbody f it
     (Or p1 p2, it) -> do
       -- NOTE: we retrieve and then restore the entire state, even though the
       -- fixed recursive pattern should never escape its syntactic scope so, in
@@ -1009,7 +1009,7 @@ close p =
       Map f p -> do
         -- f <- retrieveFun fname
         x <- close p
-        y <- each $ fun f x
+        y <- each $ fbody f x
         return y
       App fname -> error "close App"
       Or p1 p2 ->

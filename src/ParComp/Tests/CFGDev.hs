@@ -11,7 +11,7 @@ module ParComp.Tests.CFGDev
   ) where
 
 
-import           Prelude hiding (splitAt, span, map, or, any, const)
+import           Prelude hiding (splitAt, span, map, or, and, any, const)
 import qualified Prelude as P
 
 import           Control.Monad (guard, forM_)
@@ -21,10 +21,8 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import           Data.Maybe (fromJust)
 
--- import qualified ParComp.Item as I
 import qualified ParComp.ItemDev.Untyped as U
 import           ParComp.ItemDev.Untyped (Fun(..))
--- import           ParComp.Pattern (Pattern(..), Cond(..), FunName(..))
 import qualified ParComp.ItemDev.Typed as Ty
 import           ParComp.ItemDev.Typed (Pattern(..), Op(..))
 import           ParComp.ParserDev (chartParse)
@@ -63,18 +61,14 @@ type Top = Either Active Rule
 
 
 -- | Item tagless-final representation
---
--- NB: The way the constructors are defined is sensitive.  For instance, the
--- `item` function relies on the (non-transparent) fact that `Active` is a
--- pair.  Could this be made more elegant?
 class Item repr where
-  top   :: Either (repr Active a) (repr Rule b) -> repr Top (Either a b)
-  item  :: repr Rule a -> repr Span b -> repr Active (a, b)
-  span  :: repr Int a -> repr Int b -> repr Span (a, b)
-  pos   :: Int -> repr Int Int
-  rule  :: repr Head a -> repr Body b -> repr Rule (a, b)
-  rhead :: Node -> repr Head Node
-  rbody :: Body -> repr Body Body
+  top   :: Either (repr Active) (repr Rule) -> repr Top
+  item  :: repr Rule -> repr Span -> repr Active
+  span  :: repr Int -> repr Int -> repr Span
+  pos   :: Int -> repr Int
+  rule  :: repr Head -> repr Body -> repr Rule
+  rhead :: Node -> repr Head
+  rbody :: Body -> repr Body
 
 instance Item Pattern where
   top = \case
@@ -86,6 +80,11 @@ instance Item Pattern where
   pos i   = Patt $ U.encodeP i
   rhead x = Patt $ U.encodeP x
   rbody x = Patt $ U.encodeP x
+
+
+--------------------------------------------------
+-- Utils
+--------------------------------------------------
 
 
 -- -- | Replace any value by unit.
@@ -100,15 +99,9 @@ append = Fun "append" $ \(xs, ys) -> do
 
 
 -- | Operator version of `cons`
-(<:) :: (Op repr) => repr a b -> repr [a] [b] -> repr [a] [b]
+(<:) :: (Op repr) => repr a -> repr [a] -> repr [a]
 (<:) = cons
 infixr 5 <:
-
-
--- -- | Operator version of `pair` 
--- (&) :: (Op repr) => repr a b -> repr c d -> repr (a, c) (b, d)
--- (&) = pair
--- infixr 5 &
 
 
 -- | Construct a list from a head and a tail.
@@ -168,6 +161,11 @@ nodeLabel x = case T.splitOn "_" x of
   _ -> error $ "nodeLabel: unhandled symbol (" ++ T.unpack x ++ ")"
 
 
+--------------------------------------------------
+-- Rules
+--------------------------------------------------
+
+
 -- | CFG complete rule with dots
 -- complete :: Rule
 complete :: U.Rule
@@ -176,14 +174,14 @@ complete =
   where
     leftP = Ty.unPatt . top . Left $ item
       (rule (var "A")
-        (via (app $ splitAt dot)
+        (via (fun $ splitAt dot)
           (pair (var "alpha") (const dot <: var "B" <: var "beta"))
         )
       )
       (span (var "i") (var "j"))
     rightP = Ty.unPatt . top . Left $ item
       (rule (var "C")
-        (app $ endsWith dot)
+        (app . fun $ endsWith dot)
       )
       (span (var "j") (var "k"))
     condP = Ty.unCond $ eq
@@ -191,15 +189,15 @@ complete =
       (map labelH $ var "C")
     downP = Ty.unPatt . top . Left $ item
       (rule (var "A")
-        (map2 append
         -- (append
         -- (map' append
           -- (pair
-            (var "alpha")
-            (cons
-              (var "B")
-              (cons (const dot) (var "beta"))
-            )
+        (bimap append
+          (var "alpha")
+          (cons
+            (var "B")
+            (cons (const dot) (var "beta"))
+          )
           -- )
         )
       )
@@ -214,13 +212,13 @@ predict =
   where
     leftP = Ty.unPatt . top . Left $ item
       (rule any
-        (via (app $ splitAt dot)
+        (via (fun $ splitAt dot)
           (pair any (const dot <: var "B" <: any))
         )
       )
       (span (var "i") (var "j"))
     rightP = Ty.unPatt . top . Right $
-        via (rule (var "C") any) (var "rule")
+      and (rule (var "C") any) (var "rule")
     condP = Ty.unCond $ eq
       (map labelB $ var "B")
       (map labelH $ var "C")
@@ -228,6 +226,11 @@ predict =
       (var "rule")
       (span (var "j") (var "j"))
     dot = Nothing
+
+
+--------------------------------------------------
+-- Axioms 
+--------------------------------------------------
 
 
 -- | Compute the base items for the given sentence and grammar
@@ -265,6 +268,11 @@ cfgBaseItems inp cfgRules =
     mkRule hd bd = rule
       (rhead hd)
       (rbody $ Nothing : P.map Just bd)
+
+
+--------------------------------------------------
+-- Main 
+--------------------------------------------------
 
 
 testCFGDev :: IO ()
