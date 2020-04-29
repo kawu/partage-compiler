@@ -11,7 +11,8 @@ module ParComp.Tests.CFGDev
   ) where
 
 
-import           Prelude hiding (splitAt, span, map, or, and, any, const)
+import           Prelude hiding
+  (splitAt, span, map, or, and, any, const, head)
 import qualified Prelude as P
 
 import           Control.Monad (guard, forM_)
@@ -22,7 +23,7 @@ import qualified Data.Set as S
 import           Data.Maybe (fromJust)
 
 import qualified ParComp.ItemDev.Untyped as U
-import           ParComp.ItemDev.Untyped (Fun(..))
+import           ParComp.ItemDev.Untyped (Fun(..), IsPatt(..))
 import qualified ParComp.ItemDev.Typed as Ty
 import           ParComp.ItemDev.Typed (Pattern(..), Op(..))
 import           ParComp.ParserDev (chartParse)
@@ -62,24 +63,31 @@ type Top = Either Active Rule
 
 -- | Item tagless-final representation
 class Item repr where
-  top   :: Either (repr Active) (repr Rule) -> repr Top
-  item  :: repr Rule -> repr Span -> repr Active
-  span  :: repr Int -> repr Int -> repr Span
-  pos   :: Int -> repr Int
-  rule  :: repr Head -> repr Body -> repr Rule
-  rhead :: Node -> repr Head
-  rbody :: Body -> repr Body
+  topItem :: repr Active -> repr Top
+  topRule :: repr Rule -> repr Top
+  active  :: repr Rule -> repr Span -> repr Active
+  span    :: repr Int -> repr Int -> repr Span
+  pos     :: Int -> repr Int
+  rule    :: repr Head -> repr Body -> repr Rule
+  head    :: Node -> repr Head
+  body    :: Body -> repr Body
 
+-- NB: The implementation of the individual functions must be consistent with
+-- the `IsPatt` class.
 instance Item Pattern where
-  top = \case
-    Left  (Patt it) -> Patt (U.leftP it)
-    Right (Patt r)  -> Patt (U.rightP r)
-  item (Patt r) (Patt s) = Patt (U.pairP r s)
+  topItem (Patt it) = Patt (U.leftP it)
+  topRule (Patt r)  = Patt (U.rightP r)
+  active (Patt r) (Patt s) = Patt (U.pairP r s)
   span (Patt x) (Patt y) = Patt (U.pairP x y)
   rule (Patt h) (Patt b) = Patt (U.pairP h b)
   pos i   = Patt $ U.encodeP i
-  rhead x = Patt $ U.encodeP x
-  rbody x = Patt $ U.encodeP x
+  head x  = Patt $ U.encodeP x
+  body x  = Patt $ U.encodeP x
+
+
+-- | Dot in a dotted rule
+dot :: Maybe Node
+dot = Nothing
 
 
 --------------------------------------------------
@@ -161,9 +169,20 @@ nodeLabel x = case T.splitOn "_" x of
   _ -> error $ "nodeLabel: unhandled symbol (" ++ T.unpack x ++ ")"
 
 
+-- | Curry the function and apply it to the given arguments.
+bimap :: (Op repr, IsPatt b, IsPatt c, IsPatt d)
+      => U.Fun (b, c) d -> repr b -> repr c -> repr d
+bimap f x y = map f (pair x y)
+
+
 --------------------------------------------------
 -- Rules
 --------------------------------------------------
+
+
+-- data Rule repr = Rule
+--   { consequent  :: repr Top
+--   }
 
 
 -- | CFG complete rule with dots
@@ -172,37 +191,29 @@ complete :: U.Rule
 complete =
   U.Rule [leftP, rightP] downP condP
   where
-    leftP = Ty.unPatt . top . Left $ item
+    leftP = Ty.unPatt . topItem $ active
       (rule (var "A")
-        (via (fun $ splitAt dot)
+        (via (splitAt dot)
           (pair (var "alpha") (const dot <: var "B" <: var "beta"))
         )
       )
       (span (var "i") (var "j"))
-    rightP = Ty.unPatt . top . Left $ item
+    rightP = Ty.unPatt . topItem $ active
       (rule (var "C")
-        (app . fun $ endsWith dot)
+        (app $ endsWith dot)
       )
       (span (var "j") (var "k"))
     condP = Ty.unCond $ eq
       (map labelB $ var "B")
       (map labelH $ var "C")
-    downP = Ty.unPatt . top . Left $ item
+    downP = Ty.unPatt . topItem $ active
       (rule (var "A")
-        -- (append
-        -- (map' append
-          -- (pair
         (bimap append
           (var "alpha")
-          (cons
-            (var "B")
-            (cons (const dot) (var "beta"))
-          )
-          -- )
+          (var "B" <: const dot <: var "beta")
         )
       )
       (span (var "i") (var "k"))
-    dot = Nothing
 
 
 -- | CFG predict rule
@@ -210,22 +221,21 @@ predict :: U.Rule
 predict =
   U.Rule [leftP, rightP] downP condP
   where
-    leftP = Ty.unPatt . top . Left $ item
+    leftP = Ty.unPatt . topItem $ active
       (rule any
-        (via (fun $ splitAt dot)
+        (via (splitAt dot)
           (pair any (const dot <: var "B" <: any))
         )
       )
       (span (var "i") (var "j"))
-    rightP = Ty.unPatt . top . Right $
+    rightP = Ty.unPatt . topRule $
       and (rule (var "C") any) (var "rule")
     condP = Ty.unCond $ eq
       (map labelB $ var "B")
       (map labelH $ var "C")
-    downP = Ty.unPatt . top . Left $ item
+    downP = Ty.unPatt . topItem $ active
       (var "rule")
       (span (var "j") (var "j"))
-    dot = Nothing
 
 
 --------------------------------------------------
@@ -250,24 +260,24 @@ cfgBaseItems inp cfgRules =
       (ruleHead, ruleBody) <- S.toList cfgRules
       let theRule = mkRule ruleHead ruleBody
           theSpan = span (pos i) (pos i)
-          theItem = item theRule theSpan
-          theTop  = top (Left theItem)
+          theItem = active theRule theSpan
+          theTop  = topItem theItem
       return . U.strip $ Ty.unPatt theTop
     base2 = do
       (i, term) <- zip [0..n-1] inp
       let theRule = mkRule term []
           theSpan = span (pos i) (pos $ i + 1)
-          theItem = item theRule theSpan
-          theTop  = top (Left theItem)
+          theItem = active theRule theSpan
+          theTop  = topItem theItem
       return . U.strip $ Ty.unPatt theTop
     baseRules = do
       (ruleHead, ruleBody) <- S.toList cfgRules
       let theRule = mkRule ruleHead ruleBody
-          theTop  = top (Right theRule)
+          theTop  = topRule theRule
       return . U.strip $ Ty.unPatt theTop
     mkRule hd bd = rule
-      (rhead hd)
-      (rbody $ Nothing : P.map Just bd)
+      (head hd)
+      (body $ Nothing : P.map Just bd)
 
 
 --------------------------------------------------
