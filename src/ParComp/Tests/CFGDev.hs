@@ -2,12 +2,15 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
 
+{-# LANGUAGE ScopedTypeVariables #-}
+
 
 -- | Context-free grammar parsing
 
 
 module ParComp.Tests.CFGDev
   ( testCFGDev
+  , suffix
   ) where
 
 
@@ -15,7 +18,8 @@ import           Prelude hiding
   (splitAt, span, map, or, and, any, const, head)
 import qualified Prelude as P
 
-import           Control.Monad (guard, forM_)
+import           Control.Monad (forM_)
+import qualified Control.Monad as P
 
 import qualified Data.Text as T
 import qualified Data.Map.Strict as M
@@ -23,9 +27,10 @@ import qualified Data.Set as S
 import           Data.Maybe (fromJust)
 
 import qualified ParComp.ItemDev.Untyped as U
-import           ParComp.ItemDev.Untyped (Fun(..), IsPatt(..))
+import           ParComp.ItemDev.Untyped (Fun(..), Pred(..), IsPatt(..))
 import qualified ParComp.ItemDev.Typed as Ty
-import           ParComp.ItemDev.Typed (Pattern(..), Op(..))
+import           ParComp.ItemDev.Typed
+  (Pattern(..), Op(..), bimap, guard)
 import           ParComp.ParserDev (chartParse)
 
 import           Debug.Trace (trace)
@@ -52,23 +57,23 @@ type Head = Node
 type Body = [Maybe Node]
 
 -- | Dotted rule
-type Rule = (Head, Body)
+type DotRule = (Head, Body)
 
 -- | Active item
-type Active = (Rule, Span)
+type Active = (DotRule, Span)
 
 -- | Top-level item
-type Top = Either Active Rule
+type Top = Either Active DotRule
 
 
 -- | Item tagless-final representation
 class Item repr where
   topItem :: repr Active -> repr Top
-  topRule :: repr Rule -> repr Top
-  active  :: repr Rule -> repr Span -> repr Active
+  topRule :: repr DotRule -> repr Top
+  active  :: repr DotRule -> repr Span -> repr Active
   span    :: repr Int -> repr Int -> repr Span
   pos     :: Int -> repr Int
-  rule    :: repr Head -> repr Body -> repr Rule
+  rule    :: repr Head -> repr Body -> repr DotRule
   head    :: Node -> repr Head
   body    :: Body -> repr Body
 
@@ -91,13 +96,13 @@ dot = Nothing
 
 
 --------------------------------------------------
--- Utils
+-- Utility functions
 --------------------------------------------------
 
 
--- -- | Replace any value by unit.
--- constF :: b -> Fun a b
--- constF x = Fun "constF" $ P.const [x]
+-- | Replace any value by unit.
+constF :: b -> Fun a b
+constF x = Fun "constF" $ P.const [x]
 
 
 -- | Append two lists.
@@ -106,25 +111,22 @@ append = Fun "append" $ \(xs, ys) -> do
   return (xs ++ ys)
 
 
--- | Operator version of `cons`
-(<:) :: (Op repr) => repr a -> repr [a] -> repr [a]
-(<:) = cons
-infixr 5 <:
-
-
 -- | Construct a list from a head and a tail.
 consList :: Fun (a, [a]) [a]
 consList = Fun "consList" $ \(x, xs) -> do
   return (x : xs)
 
 
+-- | Split at dot.
+splitAtDot :: Fun Body (Body, Body)
+splitAtDot = _splitAt "splitAtDot" dot
+
+
 -- | Split a list at a given value.
--- TODO: The name should be different for different arguments!
-splitAt :: (Eq a) => a -> Fun [a] ([a], [a])
-splitAt y =
-  Fun "splitAt" ((:[]) . go)
+_splitAt :: (Eq a) => T.Text -> a -> Fun [a] ([a], [a])
+_splitAt txt y =
+  Fun txt ((:[]) . go)
   where
-    -- showIt x = trace ("### splitAt: " ++ show x) x
     go list@(x:xs)
       | x == y = ([], list)
       | otherwise =
@@ -134,11 +136,26 @@ splitAt y =
 
 
 -- | Check if the list ends with dot.  If so, return it as is.
--- TODO: The name should be different for different arguments!
-endsWith :: (Eq a) => a -> Fun [a] [a]
-endsWith y = Fun "endsWith" $ \xs -> do
-  guard $ lastMaybe xs == Just y
+endsWith :: (Eq a) => T.Text -> a -> Fun [a] [a]
+endsWith txt y = Fun txt $ \xs -> do
+  P.guard $ lastMaybe xs == Just y
   return xs
+
+
+-- | Make sure that the body of the dotted rule ends with the dot.
+endsWithDot :: Fun Body Body
+endsWithDot = endsWith "endsWithDot" dot
+
+
+-- | Check if the list ends with dot.  If so, return it as is.
+endsWithP :: (Eq a) => T.Text -> a -> Pred [a]
+endsWithP txt y = Pred txt $ \xs ->
+  lastMaybe xs == Just y
+
+
+-- | Does the body of the dotted rule ends with the dot?
+endsWithDotP :: Pred Body
+endsWithDotP = endsWithP "endsWithDotP" dot
 
 
 -- | Safe version of `last`
@@ -169,10 +186,70 @@ nodeLabel x = case T.splitOn "_" x of
   _ -> error $ "nodeLabel: unhandled symbol (" ++ T.unpack x ++ ")"
 
 
--- | Curry the function and apply it to the given arguments.
-bimap :: (Op repr, IsPatt b, IsPatt c, IsPatt d)
-      => U.Fun (b, c) d -> repr b -> repr c -> repr d
-bimap f x y = map f (pair x y)
+--------------------------------------------------
+-- Utility patterns
+--------------------------------------------------
+
+
+-- | Operator synonym to `cons`
+(<:) :: (Op repr) => repr a -> repr [a] -> repr [a]
+(<:) = cons
+infixr 5 <:
+
+
+-- | Match any suffix that satisfies the given suffix pattern.
+suffix :: (Op repr) => repr [a] -> repr [a]
+suffix p = fix $ or p (any <: rec)
+
+
+-- -- | Remove suffix starting with the given element.
+-- removeSuffixCont
+--   :: forall repr a. (Op repr)
+--   => repr a       -- ^ First element of the suffix
+--   -> repr [a]     -- ^ Suffix matching continuation
+--   -> repr [a]     -- ^ The entire list
+-- removeSuffixCont p cont =
+--   fix $ p1 `or` (p2 `or` p3)
+--   where
+--     p1 = letIn any (p <: any) (nil `and` cont)
+--     p2 = any <: rec
+--     p3 = nil `and` cont
+
+
+-- | Remove suffix starting with the given element.
+removeSuffix :: forall repr a. (Op repr) => repr a -> repr ([a] -> [a])
+removeSuffix p =
+  fix $ p1 `or` (p2 `or` p3)
+  where
+    p1 = letIn (p <: any) nil
+    p2 = expand (any <: rec)
+    p3 = expand nil
+
+
+-- | Split a list @xs@ into two parts @(ys, zs)@ w.r.t pattern @p@ so that:
+--
+-- * @ys = removeSuffix p xs@
+-- * @zs = suffix p xs@
+--
+splitAt :: forall repr a. (Op repr) => repr a -> repr ([a] -> ([a], [a]))
+splitAt p =
+  fix $ p1 `or` (p2 `or` p3)
+  where
+    p1 = letIn
+      ((p <: any) `and` local "suff")
+      (pair nil (local "suff"))
+    p2 = letIn
+      (local "x" <: via
+        splitRec
+        (pair (local "xs") (local "ys"))
+      )
+      (pair (local "x" <: local "xs") (local "ys"))
+    p3 = letIn nil (pair nil nil)
+
+    -- NB: defining and annotating `splitRec` is optional, but it allows to
+    -- verify that the types (of `fix` and `rec`) match.
+    splitRec :: repr ([a] -> ([a], [a]))
+    splitRec = rec
 
 
 --------------------------------------------------
@@ -180,60 +257,92 @@ bimap f x y = map f (pair x y)
 --------------------------------------------------
 
 
--- data Rule repr = Rule
---   { consequent  :: repr Top
---   }
+-- | Typed deduction rule
+data Rule repr = Rule
+  { antecedents :: [repr Top]
+  , consequent  :: repr Top
+  , sideCond    :: repr Bool
+  }
 
 
--- | CFG complete rule with dots
--- complete :: Rule
+-- | Compile the rule to its untyped counterpart.
+compileRule :: Rule Pattern -> U.Rule
+compileRule Rule{..} = U.Rule
+  { U.antecedents = P.map Ty.unPatt antecedents
+  , U.consequent  = Ty.unPatt consequent
+  , U.condition   = Ty.unCond sideCond
+  }
+
+
+-- | CFG complete rule
 complete :: U.Rule
 complete =
-  U.Rule [leftP, rightP] downP condP
+
+  compileRule $
+    Rule [leftP, rightP] downP condP
+
   where
-    leftP = Ty.unPatt . topItem $ active
-      (rule (var "A")
-        (via (splitAt dot)
-          (pair (var "alpha") (const dot <: var "B" <: var "beta"))
+
+    leftP = topItem $ active
+      (rule v_A
+        -- (via (fun splitAtDot)
+        (via (splitAt (const dot))
+          (pair v_alpha (const dot <: v_B <: v_beta))
         )
       )
-      (span (var "i") (var "j"))
-    rightP = Ty.unPatt . topItem $ active
-      (rule (var "C")
-        (app $ endsWith dot)
+      (span v_i v_j)
+
+    rightP = topItem $ active
+      (rule v_C
+        -- (guard endsWithDotP)
+        (suffix $ const dot <: nil)
+        -- (removeSuffix (const dot) any)
       )
-      (span (var "j") (var "k"))
-    condP = Ty.unCond $ eq
-      (map labelB $ var "B")
-      (map labelH $ var "C")
-    downP = Ty.unPatt . topItem $ active
-      (rule (var "A")
+      (span v_j v_k)
+
+    condP = eq
+      (map labelB v_B)
+      (map labelH v_C)
+
+    downP = topItem $ active
+      (rule v_A
         (bimap append
-          (var "alpha")
-          (var "B" <: const dot <: var "beta")
+          v_alpha
+          (v_B <: const dot <: v_beta)
         )
       )
-      (span (var "i") (var "k"))
+      (span v_i v_k)
+
+    -- Variables and their types
+    v_A = var "A"         :: Pattern Node
+    v_B = var "B"         :: Pattern (Maybe Node)
+    v_C = var "C"         :: Pattern Node
+    v_alpha = var "alpha" :: Pattern Body
+    v_beta = var "beta"   :: Pattern Body
+    v_i = var "i"         :: Pattern Int
+    v_j = var "j"         :: Pattern Int
+    v_k = var "k"         :: Pattern Int
 
 
 -- | CFG predict rule
 predict :: U.Rule
 predict =
-  U.Rule [leftP, rightP] downP condP
+  compileRule $
+    Rule [leftP, rightP] downP condP
   where
-    leftP = Ty.unPatt . topItem $ active
+    leftP = topItem $ active
       (rule any
-        (via (splitAt dot)
+        (via (fun splitAtDot)
           (pair any (const dot <: var "B" <: any))
         )
       )
       (span (var "i") (var "j"))
-    rightP = Ty.unPatt . topRule $
+    rightP = topRule $
       and (rule (var "C") any) (var "rule")
-    condP = Ty.unCond $ eq
+    condP = eq
       (map labelB $ var "B")
       (map labelH $ var "C")
-    downP = Ty.unPatt . topItem $ active
+    downP = topItem $ active
       (var "rule")
       (span (var "j") (var "j"))
 

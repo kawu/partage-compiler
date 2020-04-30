@@ -15,8 +15,9 @@ module ParComp.ItemDev.Untyped
 
   -- * Core types
     Fun (..)
-  , Pred
+  , Pred (..)
   , Var (..)
+  , LVar (..)
 
 --   -- * Registered functions
 --     FunSet (..)
@@ -54,6 +55,11 @@ module ParComp.ItemDev.Untyped
   , anyP
   , withP
 
+  , localP
+  , letP
+  , fixP
+  , recP
+
   -- * Matching
   , MatchT
   , MatchingStrategy (..)
@@ -84,6 +90,8 @@ module ParComp.ItemDev.Untyped
   , pickOne
   ) where
 
+
+-- import qualified System.Random as R
 
 import           Control.Monad (guard, void, forM)
 import qualified Control.Monad.RWS.Strict as RWS
@@ -138,6 +146,8 @@ right y   = I . Union $ Right y
 
 
 -- | Named function
+--
+-- We require that all function and predicate names are unique.
 data Fun a b = Fun
   { fname :: T.Text
     -- ^ The function's name
@@ -155,11 +165,15 @@ instance Ord (Fun a b) where
   x `compare` y = fname x `compare` fname y
 
 
--- | Named function
+-- | Named predicate
+--
+-- We require that all function and predicate names are unique.  (See the
+-- `guard` function in the `Typed` module to understand why a predicate should
+-- not have the same name as a function).
 data Pred a = Pred
   { pname :: T.Text
     -- ^ The predicate's name
-  , pred  :: a -> Bool
+  , pbody :: a -> Bool
     -- ^ The predicate itself
   }
 
@@ -189,8 +203,13 @@ unVar (Var x) = x
 
 
 -- | Local variable name
-newtype LVar = LVar {unLVar :: T.Text}
+newtype LVar = LVar T.Text
   deriving (Show, Eq, Ord)
+
+
+-- | Extract the variable.
+unLVar :: LVar -> T.Text
+unLVar (LVar x) = x
 
 
 -- | Pattern operation expression
@@ -206,6 +225,8 @@ data Op t
   -- `Via` can be seen as conjunction.
   | Label Var
   -- ^ Label: match any item expression and bind it to the given variable
+  | Local LVar
+  -- ^ Local variable: local variable used in the `Let` pattern
   | Any
   -- ^ Any: match any item expression (wildcard pattern)
   | Map (Fun Rigit Rigit) t
@@ -215,6 +236,16 @@ data Op t
   -- ^ Application: apply the function to the item before pattern matching.
   | With t (Cond t)
   -- ^ With: pattern match and (then) check the condition
+  | Let t t t
+  -- ^ Let: `Let x e y` should be read as ,,let x = e in y'', where:
+  -- * `e` is matched with the underlying item
+  -- * `x` is matched with the result to bind local variables
+  -- * `y` is the result constructed based on the bound local variables
+  | Fix t
+  -- ^ Fix: `Fix p` defines a recursive pattern `p`, which can be referred to
+  -- with `Rec` from within `p`
+  | Rec
+  -- ^ Rec: call recursive pattern `p` defined with `Fix p`
   deriving (Show, Eq, Ord)
 
 
@@ -247,7 +278,7 @@ data Pattern
 
 
 -- | Pattern constructors
-unitP       = P Unit
+unitP       = P $ Unit
 symP x      = P $ Sym x
 pairP x y   = P $ Pair x y
 leftP x     = P . Union $ Left x
@@ -258,8 +289,12 @@ orP x y     = O $ Or x y
 appP f      = O $ App f
 mapP f x    = O $ Map f x
 labelP v    = O $ Label v
+localP v    = O $ Local v
 anyP        = O $ Any
 withP p c   = O $ With p c
+letP x e y  = O $ Let x e y
+fixP p      = O $ Fix p
+recP        = O $ Rec
 
 
 -- | Convert the pattern to the corresponding item expression, in case it does
@@ -391,121 +426,6 @@ instance (IsPatt a) => IsPatt [a] where
 
 
 --------------------------------------------------
--- Encoding patterns
---------------------------------------------------
-
-
--- class IsPattern t where
---   -- | Encode a value as a pattern
---   encode :: t -> Pattern
---   -- | Decode a value from a pattern
---   decode :: Pattern -> t
--- 
--- 
--- instance IsPattern () where
---   encode _ = unitP
---   decode _ = ()
--- 
--- instance IsPattern Bool where
---   encode = \case
---     False -> leftP unitP
---     True  -> rightP unitP
---   decode (P (Union u)) =
---     case u of
---       Left  _ -> False
---       Right _ -> True
---   decode p =
---     error $ "cannot decode " ++ show p ++ " to Bool"
--- 
--- instance IsPattern Int where
---   encode = symP . T.pack . show
---   decode (P (Sym x)) = read (T.unpack x)
---   decode p =
---     error $ "cannot decode " ++ show p ++ " to Int"
--- 
--- instance IsPattern T.Text where
---   encode = symP
---   decode (P (Sym x)) = x
---   decode p =
---     error $ "cannot decode " ++ show p ++ " to Text"
--- 
--- instance (IsPattern a, IsPattern b) => IsPattern (a, b) where
---   encode (x, y) = pairP (encode x) (encode y)
---   decode (P (Pair x y)) = (decode x, decode y)
---   decode p =
---     error $ "cannot decode " ++ show p ++ " to (,)"
--- 
--- instance (IsPattern a, IsPattern b, IsPattern c) => IsPattern (a, b, c) where
---   encode (x, y, z) = pairP (encode x) (pairP (encode y) (encode z))
---   decode (P (Pair x (P (Pair y z)))) = (decode x, decode y, decode z)
---   decode p =
---     error $ "cannot decode " ++ show p ++ " to (,,)"
--- 
--- instance (IsPattern a) => IsPattern (Maybe a) where
---   encode = \case
---     Nothing -> leftP unitP
---     Just x -> rightP $ encode x
---   decode (P (Union u)) =
---     case u of
---       Left _ -> Nothing
---       Right x -> Just (decode x)
---   decode p =
---     error $ "cannot decode " ++ show p ++ " to Maybe"
--- 
--- instance (IsPattern a, IsPattern b) => IsPattern (Either a b) where
---   encode = \case
---     Left x  -> leftP  $ encode x
---     Right y -> rightP $ encode y
---   decode (P (Union u)) =
---     case u of
---       Left x  -> Left  $ decode x
---       Right y -> Right $ decode y
---   decode p =
---     error $ "cannot decode " ++ show p ++ " to Either"
--- 
--- instance (IsPattern a) => IsPattern [a] where
---   encode = \case
---     x : xs  -> leftP $ pairP (encode x) (encode xs)
---     []      -> rightP unitP
---   decode (P (Union u)) =
---     case u of
---       Left p ->
---         let (x, xs) = decode p
---          in x : xs
---       Right _ -> []
---   decode p =
---     error $ "cannot decode " ++ show p ++ " to []"
--- 
--- -- -- | Generic pattern operation encoding
--- -- instance (IsPattern t) => IsPattern (Op t) where
--- --   encode = \case
--- --     Or x y -> O $ Or (encode x) (encode y)
--- --     Via x y -> O $ Via (encode x) (encode y)
--- --     Label v -> O $ Label v
--- --     Any -> O Any
--- --     Map fn x -> O $ Map fn (encode x)
--- --     App fn -> O $ App fn
--- --     With p c -> O $ With (encode p) (encodeC c)
--- --   decode (O op) =
--- --     case op of
--- --       Or x y -> Or (decode x) (decode y)
--- --       Any -> Any
--- --       _ -> error "Op decoding not implemented yet!"
--- --   decode p =
--- --     error $ "cannot decode " ++ show p ++ " to Op"
--- --
--- --
--- -- -- | Encode the pattern condition
--- -- encodeC :: IsPattern t => Cond t -> Cond Pattern
--- -- encodeC = \case
--- --   Eq x y    -> Eq (encode x) (encode y)
--- --   Check p x -> Check p (encode x)
--- --   And x y   -> And (encodeC x) (encodeC y)
--- --   OrC x y   -> OrC (encodeC x) (encodeC y)
--- --   TrueC     -> TrueC
-
-
---------------------------------------------------
 -- Global vars
 --------------------------------------------------
 
@@ -519,34 +439,32 @@ instance (IsPatt a) => IsPatt [a] where
 -- contain the same set of global variables (this is currently checked at
 -- runtime).
 globalVarsIn :: Pattern -> S.Set Var
-globalVarsIn (P ip) =
-  case ip of
-    Pair p1 p2 -> globalVarsIn p1 <> globalVarsIn p2
-    Union up -> case up of
-      Left p  -> globalVarsIn p
-      Right p -> globalVarsIn p
-    _ -> S.empty
-globalVarsIn (O op) =
-  case op of
-    Or x y ->
-      let xs = globalVarsIn x
-          ys = globalVarsIn y
-       in if xs == ys
-             then xs
-             else error "globalVarsIn: different sets of variables in Or"
-    Via p x -> globalVarsIn p <> globalVarsIn x
-    Label v -> S.singleton v
-    Any -> S.empty
-    Map _ p -> globalVarsIn p
-    App _ -> S.empty
-    With p _ -> globalVarsIn p
-
---     -- Below, ignore `x` and `y`, which should contain local variables only
---     Let x e y -> globalVarsIn e
---     Fix p -> globalVarsIn p
---     Rec -> Set.empty
---     -- Below, we don't inspect the condition, since it doesn't bind additional
---     -- variables during matching
+globalVarsIn (P ip) = case ip of
+  Pair p1 p2 -> globalVarsIn p1 <> globalVarsIn p2
+  Union up -> case up of
+    Left p  -> globalVarsIn p
+    Right p -> globalVarsIn p
+  _ -> S.empty
+globalVarsIn (O op) = case op of
+  Or x y ->
+    let xs = globalVarsIn x
+        ys = globalVarsIn y
+     in if xs == ys
+           then xs
+           else error "globalVarsIn: different sets of variables in Or"
+  Via p x -> globalVarsIn p <> globalVarsIn x
+  Label v -> S.singleton v
+  Local _ -> error "globalVarsIn: encountered local variable!"
+  Any -> S.empty
+  Map _ p -> globalVarsIn p
+  App _ -> S.empty
+  -- Below, we don't inspect the condition, since it doesn't bind additional
+  -- variables during matching
+  With p _ -> globalVarsIn p
+  -- Below, ignore `x` and `y`, which should contain local variables only
+  Let x e y -> globalVarsIn e
+  Fix p -> globalVarsIn p
+  Rec -> S.empty
 
 
 --------------------------------------------------
@@ -831,6 +749,9 @@ match ms (O op) it =
     (Label x, _) -> do
       bindVar x it
       return it
+    (Local x, _) -> do
+      bindLVar x it
+      return it
     (Any, _) ->
       return it
 --     (Map fname p, it) -> do
@@ -873,18 +794,28 @@ match ms (O op) it =
       match ms p it
       check ms c
       return it
-
---     (Let x e y, it) -> do
---       it' <- match ms e it
---       withLocalEnv $ do
---         match ms x it'
---         close y
---     (Fix p, it) -> do
---       withFix p $ do
---         match ms p it
---     (Rec, it) -> do
---       p <- fixed
---       match ms p it
+    (Let x e y, it) -> do
+      -- mark <- (`mod` 1000) <$> P.liftIO (R.randomIO :: IO Int)
+      it' <- match ms e it
+      withLocalEnv $ do
+--         P.liftIO $ do
+--           putStr "!!! Let1 #" >> print mark
+--           putStr "x: " >> print x
+--           putStr "y: " >> print y
+--           putStr "it: " >> print y
+        match ms x it'
+--         P.liftIO $ do
+--           putStr "!!! Let2 #" >> print mark
+        close y
+--         P.liftIO $ do
+--           putStr "!!! Let3 #" >> print mark
+--           print z
+    (Fix p, it) -> do
+      withFix p $ do
+        match ms p it
+    (Rec, it) -> do
+      p <- fixed
+      match ms p it
 
 
 -- | Check the side condition expression.
@@ -901,6 +832,9 @@ check Strict = \case
 --   Pred pname p -> do
 --     flag <- retrievePred pname <*> close p
 --     guard flag
+  Check pred p -> do
+    flag <- pbody pred <$> close p
+    guard flag
   And cx cy -> check Strict cx  >> check Strict cy
   OrC cx cy -> check Strict cx <|> check Strict cy
   TrueC -> pure ()
@@ -916,16 +850,16 @@ check Lazy = \case
       (True, False) -> bindPatt py =<< close px
       (False, True) -> bindPatt px =<< close py
       (False, False) -> error "check Lazy: both patterns not closeable"
---   Pred pname p -> do
---     pred <- retrievePred pname
---     closeable p >>= \case
---       True  -> do
---         flag <- pred <$> close p
---         guard flag
---       False -> do
---         -- NB: We bind the pattern (see also `getLockVarsC`) with the unit
---         -- value to indicate that the value of the condition is True.
---         bindPatt (withP unitP (Pred pname p)) unit
+  Check pred p -> do
+    -- pred <- retrievePred pname
+    closeable p >>= \case
+      True  -> do
+        flag <- pbody pred <$> close p
+        guard flag
+      False -> do
+        -- NB: We bind the pattern (see also `getLockVarsC`) with the unit
+        -- value to indicate that the value of the condition is True.
+        bindPatt (withP unitP (Check pred p)) unit
   And cx cy -> check Lazy cx >> check Lazy cy
   -- NB: Below, `alt` is necessary since `check` can modify the state in case
   -- of lazy evaluation
@@ -996,8 +930,14 @@ close p =
 --         lookupVar v >>= \case
 --           Just it -> pure it
 --           Nothing -> error $ "close: Var not bound"
-      Any -> empty
+      Local v ->
+        lookupLVar v >>= \case
+          Just it -> pure it
+          -- Local variables have syntactic scope, so the following should
+          -- never happen
+          Nothing -> error $ "close: LVar not bound"
       -- Fail in case of a wildcard pattern
+      Any -> empty
 --       LVar v ->
 --         lookupLVar v >>= \case
 --           Just it -> pure it
@@ -1019,16 +959,25 @@ close p =
         it <- close p
         check Strict c
         return it
-      -- Not sure what to do with the three patterns below.  The intuitive
-      -- implementations are given below, but they would not necessarily
-      -- provide the desired behavior (especially in case of Fix/Ref).  In case
-      -- of `Via`, the intuitive implementation would require performing the
-      -- match with possibly global variables.  We could alternatively perform
-      -- the @close x@ operation beforehand.  I guess we need some good
+      -- Note that the implementation for `Via` requires performing the match
+      -- with possibly global variables.  One situation where this makes sense
+      -- is in the context of matching the @Let x e y@ pattern, where @y@ can
+      -- contain global variables (if we allow it, which seems useful).
+      Via p x -> do
+        it <- close p
+        match Strict x it
+      -- Not sure what to do with the two patterns below.  The intuitive
+      -- implementations are commented out below, but they would not
+      -- necessarily provide the desired behavior.  I guess we need some good
       -- examples showing what to do with those cases (if anything).
-      Via _ _ -> error "close Via"
---       Fix _ -> error "close Fix"
---       Rec -> error "close Rec"
+      Fix _ -> error "close Fix"
+      Rec -> error "close Rec"
+--   Fix p ->
+--     withFix p $ do
+--       close p
+--   Rec -> do
+--     p <- fixed
+--     close p
 
 
 -- | Is the given pattern possible to close?
@@ -1045,10 +994,10 @@ closeable (O op) = case op of
     lookupVar v >>= \case
       Just it -> pure True
       Nothing -> pure False
---   LVar v ->
---     lookupLVar v >>= \case
---       Just it -> pure True
---       Nothing -> pure False
+  Local v ->
+    lookupLVar v >>= \case
+      Just it -> pure True
+      Nothing -> pure False
   Any -> pure False
   Map _ p -> closeable p
   App _ -> pure False
@@ -1061,18 +1010,18 @@ closeable (O op) = case op of
     if c1 == c2
        then return c1
        else error "closeable Or: different results for different branches"
---   Let x e y -> closeable e
   With p c -> (&&) <$> closeable p <*> closeableC c
+  Let x e y -> closeable e
   Via _ _ -> error "closeable Via"
---   Fix _ -> error "closeable Fix"
---   Rec -> error "closeable Rec"
+  Fix _ -> error "closeable Fix"
+  Rec -> error "closeable Rec"
 
 
 -- | Is the given side condition possible to close?
 closeableC :: (Monad m) => Cond Pattern -> MatchT m Bool
 closeableC = \case
   Eq px py -> (&&) <$> closeable py <*> closeable py
---   Pred _ p -> closeable p
+  Check _ p -> closeable p
   And cx cy -> (&&) <$> closeableC cx <*> closeableC cy
   -- TODO: what about the case below?
   OrC cx cy -> undefined
@@ -1183,7 +1132,7 @@ getLockVars (O op) = case op of
     lookupVar v >>= \case
       Just it -> pure $ S.singleton (labelP v)
       Nothing -> pure S.empty
---   LVar v -> error "getLockVars: encountered local variable!"
+  Local v -> error "getLockVars: encountered local variable!"
   Any -> pure S.empty
   Map fn p -> do
     closeable p >>= \case
@@ -1200,11 +1149,11 @@ getLockVars (O op) = case op of
        then return s1
        else error "getLockVars Or: different results for different branches"
   -- Below, ignore `x` and `y`, which should contain local variables only
---   Let x e y -> getLockVars e
   Via p x -> (<>) <$> getLockVars p <*> getLockVars x
---   Fix p -> getLockVars p
---   Rec -> pure S.empty
   With p c -> (<>) <$> getLockVars p <*> getLockVarsC c
+  Let x e y -> getLockVars e
+  Fix p -> getLockVars p
+  Rec -> pure S.empty
 
 
 -- | Retrieve the bound variables and patterns for the lock.
@@ -1217,12 +1166,12 @@ getLockVarsC = \case
       (True, False) -> pure $ S.singleton px
       (False, True) -> pure $ S.singleton py
       _ -> pure S.empty
---   Pred pn p ->
---     closeable p >>= \case
---       -- NB: Below, we cast the predicate to a `With` pattern.  This is because
---       -- currently the lock only supports patterns, and not conditions.
---       True -> pure $ S.singleton (withP unitP (Pred pn p))
---       False -> pure S.empty
+  Check pred p ->
+    closeable p >>= \case
+      -- NB: Below, we cast the predicate to a `With` pattern.  This is because
+      -- currently the lock only supports patterns, and not conditions.
+      True -> pure $ S.singleton (withP unitP (Check pred p))
+      False -> pure S.empty
   And c1 c2 -> (<>) <$> getLockVarsC c1 <*> getLockVarsC c2
   -- NB: `alt` is not necessary since `getLockVar` doesn't modify the state
   OrC c1 c2 -> getLockVarsC c1 <|> getLockVarsC c2
