@@ -11,6 +11,9 @@
 module ParComp.Tests.CFGDev
   ( testCFGDev
   , suffix
+  , testAppEnd
+  , testX
+  , testMatch
   ) where
 
 
@@ -216,14 +219,14 @@ suffix p = fix $ or p (any <: rec)
 --     p3 = nil `and` cont
 
 
--- | Remove suffix starting with the given element.
-removeSuffix :: forall repr a. (Op repr) => repr a -> repr ([a] -> [a])
-removeSuffix p =
-  fix $ p1 `or` (p2 `or` p3)
-  where
-    p1 = letIn (p <: any) nil
-    p2 = expand (any <: rec)
-    p3 = expand nil
+-- -- | Remove suffix starting with the given element.
+-- removeSuffix :: forall repr a. (Op repr) => repr a -> repr ([a] -> [a])
+-- removeSuffix p =
+--   fix $ p1 `or` (p2 `or` p3)
+--   where
+--     p1 = letIn (p <: any) nil
+--     p2 = expand (any <: rec)
+--     p3 = expand nil
 
 
 -- | Split a list @xs@ into two parts @(ys, zs)@ w.r.t pattern @p@ so that:
@@ -250,6 +253,52 @@ splitAt p =
     -- verify that the types (of `fix` and `rec`) match.
     splitRec :: repr ([a] -> ([a], [a]))
     splitRec = rec
+
+
+-- | Append the first list at the end of the second list.
+appendEnd :: forall repr a. (Op repr) => repr [a] -> repr ([a] -> [a])
+appendEnd ys =
+  fix $ p1 `or` p2
+  where
+    p1 = letIn nil ys
+    p2 = letIn
+      (local "x" <: via rec (local "xs"))
+      (local "x" <: local "xs")
+
+
+-- | Append two lists.
+append' :: forall repr a. (Op repr) => repr [a] -> repr [a] -> repr [a]
+append' xs ys = map (appendEnd ys) xs
+
+
+--------------------------------------------------
+-- Tests
+--------------------------------------------------
+
+
+testAppEnd :: Pattern (Body -> Body)
+testAppEnd = appendEnd nil
+
+
+testX :: Body
+testX = [Nothing, Just "a"]
+
+
+testMatch :: IO ()
+testMatch = U.runMatchT $ do
+  let f = unPatt testAppEnd
+      x = U.encodeI testX
+  it' <- U.match U.Strict f x
+  U.lift $ do
+    putStr "f   : " >> print f
+    putStr "x   : " >> print testX
+    putStr "it' : " >> print (U.decodeI it' :: Body)
+
+
+-- testApp :: Pattern [Int]
+-- testApp = append'
+--   (const 1 <: const 2 <: nil)
+--   (const 3 <: const 4 <: nil)
 
 
 --------------------------------------------------
@@ -301,12 +350,13 @@ complete =
       (span v_j v_k)
 
     condP = eq
-      (map labelB v_B)
-      (map labelH v_C)
+      (map (fun labelB) v_B)
+      (map (fun labelH) v_C)
 
     downP = topItem $ active
       (rule v_A
-        (bimap append
+        (append'
+        -- (bimap append
           v_alpha
           (v_B <: const dot <: v_beta)
         )
@@ -332,18 +382,17 @@ predict =
   where
     leftP = topItem $ active
       (rule any
---         (via (fun splitAtDot)
---         (via (splitAt (const dot))
---           (pair any (const dot <: var "B" <: any))
---         )
         (suffix $ const dot <: var "B" <: any)
       )
       (span (var "i") (var "j"))
     rightP = topRule $
-      rule (var "C") (var "alpha")
+      rule (var "C")
+        ( (var "alpha" :: Pattern Body)
+--           `and` append' (var "alpha" :: Pattern Body) (nil :: Pattern Body)
+        )
     condP = eq
-      (map labelB $ var "B")
-      (map labelH $ var "C")
+      (map (fun labelB) $ var "B")
+      (map (fun labelH) $ var "C")
     downP = topItem $ active
       (rule (var "C") (var "alpha"))
       (span (var "j") (var "j"))

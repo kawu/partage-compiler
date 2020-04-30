@@ -6,6 +6,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 {-# LANGUAGE QuantifiedConstraints #-}
 
@@ -51,6 +52,7 @@ module ParComp.ItemDev.Untyped
   , viaP
   , appP
   , mapP
+  , map'P
   , labelP
   , anyP
   , withP
@@ -91,7 +93,7 @@ module ParComp.ItemDev.Untyped
   ) where
 
 
--- import qualified System.Random as R
+import qualified System.Random as R
 
 import           Control.Monad (guard, void, forM)
 import qualified Control.Monad.RWS.Strict as RWS
@@ -106,6 +108,8 @@ import           Data.String (IsString)
 import qualified Data.Text as T
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
+
+import           Debug.Trace (trace)
 
 
 --------------------------------------------------
@@ -232,6 +236,8 @@ data Op t
   | Map (Fun Rigit Rigit) t
   -- ^ Mapping: match the pattern with the item and apply the function to the
   -- result.
+  | Map' t t
+  -- ^ Mapping: ???
   | App (Fun Rigit Rigit)
   -- ^ Application: apply the function to the item before pattern matching.
   | With t (Cond t)
@@ -288,6 +294,7 @@ viaP x y    = O $ Via x y
 orP x y     = O $ Or x y
 appP f      = O $ App f
 mapP f x    = O $ Map f x
+map'P f x   = O $ Map' f x
 labelP v    = O $ Label v
 localP v    = O $ Local v
 anyP        = O $ Any
@@ -457,6 +464,15 @@ globalVarsIn (O op) = case op of
   Local _ -> error "globalVarsIn: encountered local variable!"
   Any -> S.empty
   Map _ p -> globalVarsIn p
+  Map' f p ->
+    let fs = globalVarsIn f
+        ps = globalVarsIn p
+     in if S.null fs
+           then ps
+           else error $ concat
+              [ "globalVarsIn: functional pattern with global variables: "
+              , show (S.toList fs)
+              ]
   App _ -> S.empty
   -- Below, we don't inspect the condition, since it doesn't bind additional
   -- variables during matching
@@ -535,6 +551,9 @@ lookupVar
   :: (Monad m)
   => Var
   -> MatchT m (Maybe Rigit)
+-- lookupVar v@(Var "gamma") = do
+--   x <- RWS.gets $ M.lookup v . getL genv
+--   return $ trace ("!!! gamma = " ++ show x) x
 lookupVar v = RWS.gets $ M.lookup v . getL genv
 
 
@@ -615,6 +634,52 @@ alt m1 m2 = do
     m2
 
 
+-- -- | Perform the given patter matching in a local environment, restoring the
+-- -- values of all the local variables at the end.
+-- withLocalEnv
+--   :: (P.MonadIO m)
+--   => MatchT m a
+--   -> MatchT m a
+-- withLocalEnv m = do
+--   mark <- (`mod` 1000) <$> P.liftIO (R.randomIO :: IO Int)
+--   e <- RWS.gets (getL lenv)
+--   P.liftIO $ do
+--     putStr ">>> IN: "
+--     print mark
+-- 
+--   next (P.enumerate m) >>= \case
+--     Left _ -> do
+--       restore e mark
+--       empty
+--     Right (x, p) -> do
+--       go e mark x p
+-- 
+-- --   x <- m <|> do
+-- --     restore e mark
+-- --     empty
+-- --   restore e mark
+-- --   return x
+-- 
+--   where
+-- 
+--     go e mark x p = do
+--       restore e mark
+--       return x
+--       next p >>= \case
+--         Left _ -> undefined
+--         Right (x', p') ->
+--           go e mark x' p'
+-- 
+--     next p = RWS.lift (P.next p)
+-- 
+--     -- Restore the local environment
+--     restore e mark = do
+--       RWS.modify' (setL lenv e)
+--       P.liftIO $ do
+--         putStr "<<< OUT: "
+--         print mark
+
+
 -- | Perform the given patter matching in a local environment, restoring the
 -- values of all the local variables at the end.
 withLocalEnv
@@ -622,18 +687,24 @@ withLocalEnv
   => MatchT m a
   -> MatchT m a
 withLocalEnv m = do
-  e <- RWS.gets (getL lenv)
 --   mark <- (`mod` 1000) <$> P.liftIO (R.randomIO :: IO Int)
+  e <- RWS.gets (getL lenv)
 --   P.liftIO $ do
 --     putStr ">>> IN: "
 --     print mark
-  m <|> do
-    -- Restore the local environment
-    RWS.modify' (setL lenv e)
---     P.liftIO $ do
---       putStr "<<< OUT: "
---       print mark
+  x <- m <|> do
+    restore e  -- mark
     empty
+  restore e  -- mark
+  return x
+  where
+    -- Restore the local environment
+--     restore e mark = do
+    restore e = do
+      RWS.modify' (setL lenv e)
+--       P.liftIO $ do
+--         putStr "<<< OUT: "
+--         print mark
 
 
 -- | Perform match with the recursive pattern.
@@ -770,6 +841,33 @@ match ms (O op) it =
             False -> do
               bindPatt p it
               return it
+    (Map' f p, it) -> do
+      case ms of
+        Strict -> do
+          x <- close p
+          it' <- match ms f x
+          guard $ it' == it
+          return it
+        -- TODO: properly handle Lazy matching
+        Lazy -> do
+--           P.liftIO $ do
+--             putStrLn "!!! Matching Map' (1)"
+--             putStr "p   : " >> print p
+--             putStr "it  : " >> print it
+--             putStr "f   : " >> print f
+          x <- close p
+--           P.liftIO $ do
+--             putStrLn "!!! Matching Map' (2)"
+--             putStr "x   : " >> print x
+          it' <- match ms f x
+--           P.liftIO $ do
+--             putStrLn "!!! Matching Map' (3)"
+--             putStr "it' : " >> print it'
+--             putStr "it == it': " >> print (it' == it)
+          guard $ it' == it
+--           P.liftIO $ do
+--             putStrLn "!!! Matching Map' (4)"
+          return it
 --     (App fname, it) -> do
     (App f, it) -> do
       -- f <- retrieveFun fname
@@ -795,21 +893,33 @@ match ms (O op) it =
       check ms c
       return it
     (Let x e y, it) -> do
-      -- mark <- (`mod` 1000) <$> P.liftIO (R.randomIO :: IO Int)
+--       mark <- (`mod` 1000) <$> P.liftIO (R.randomIO :: IO Int)
+--       RWS.gets (getL lenv) >>= \lvs -> P.liftIO $ do
+--         putStr "!!! Let0 #" >> print mark
+--         putStr "lvs : " >> print lvs
       it' <- match ms e it
+--       -- Temporary test below
+--       if (it /= it')
+--          then error "it /= it'"
+--          else return ()
       withLocalEnv $ do
---         P.liftIO $ do
+--         RWS.gets (getL lenv) >>= \lvs -> P.liftIO $ do
+--           -- putStr ("[" ++ show mark ++ "-2] ")
 --           putStr "!!! Let1 #" >> print mark
---           putStr "x: " >> print x
---           putStr "y: " >> print y
---           putStr "it: " >> print y
+--           putStr "x   : " >> print x
+--           putStr "y   : " >> print y
+--           putStr "it  : " >> print it
+--           putStr "lvs : " >> print lvs
         match ms x it'
---         P.liftIO $ do
+--         RWS.gets (getL lenv) >>= \lvs -> P.liftIO $ do
 --           putStr "!!! Let2 #" >> print mark
-        close y
---         P.liftIO $ do
+--           putStr "lvs : " >> print lvs
+        z <- close y
+--         RWS.gets (getL lenv) >>= \lvs -> P.liftIO $ do
 --           putStr "!!! Let3 #" >> print mark
---           print z
+--           putStr "z   : " >> print z
+--           putStr "lvs : " >> print lvs
+        return z
     (Fix p, it) -> do
       withFix p $ do
         match ms p it
@@ -951,6 +1061,9 @@ close p =
         x <- close p
         y <- each $ fbody f x
         return y
+      Map' f p -> do
+        it <- close p
+        match Strict f it
       App fname -> error "close App"
       Or p1 p2 ->
         -- NB: `alt` is not necessary, because `close` doesn't modify the state
@@ -981,13 +1094,15 @@ close p =
 
 
 -- | Is the given pattern possible to close?
-closeable :: (Monad m) => Pattern -> MatchT m Bool
+closeable :: (P.MonadIO m) => Pattern -> MatchT m Bool
 closeable (P ip) = case ip of
   Pair p1 p2 -> (&&) <$> closeable p1 <*> closeable p2
   Union up ->
     case up of
       Left lp  -> closeable lp
       Right rp -> closeable rp
+  Unit  -> pure True
+  Sym _ -> pure True
 closeable (O op) = case op of
 --   Const it -> pure True
   Label v ->
@@ -1000,6 +1115,7 @@ closeable (O op) = case op of
       Nothing -> pure False
   Any -> pure False
   Map _ p -> closeable p
+  Map' f p -> (&&) <$> closeable f <*> closeable p
   App _ -> pure False
   Or p1 p2 -> do
     c1 <- closeable p1
@@ -1018,7 +1134,7 @@ closeable (O op) = case op of
 
 
 -- | Is the given side condition possible to close?
-closeableC :: (Monad m) => Cond Pattern -> MatchT m Bool
+closeableC :: (P.MonadIO m) => Cond Pattern -> MatchT m Bool
 closeableC = \case
   Eq px py -> (&&) <$> closeable py <*> closeable py
   Check _ p -> closeable p
@@ -1118,7 +1234,7 @@ type Key = M.Map Pattern Rigit
 
 
 -- | Retrieve the bound variables and patterns for the lock.
-getLockVars :: (Monad m) => Pattern -> MatchT m (S.Set Pattern)
+getLockVars :: (P.MonadIO m) => Pattern -> MatchT m (S.Set Pattern)
 getLockVars (P ip) = case ip of
 --   Const _ -> pure S.empty
   Unit -> pure S.empty
@@ -1137,6 +1253,12 @@ getLockVars (O op) = case op of
   Map fn p -> do
     closeable p >>= \case
       True -> pure $ S.singleton (mapP fn p)
+      False -> pure S.empty
+  Map' f p -> do
+    closeable p >>= \case
+      True ->
+        trace "getLockVars: doesn't handle Map' with a closeable pattern" $
+          pure S.empty
       False -> pure S.empty
   App _ -> pure S.empty
   Or x y -> do
@@ -1157,7 +1279,7 @@ getLockVars (O op) = case op of
 
 
 -- | Retrieve the bound variables and patterns for the lock.
-getLockVarsC :: (Monad m) => Cond Pattern -> MatchT m (S.Set Pattern)
+getLockVarsC :: (P.MonadIO m) => Cond Pattern -> MatchT m (S.Set Pattern)
 getLockVarsC = \case
   Eq px py -> do
     cx <- closeable px
@@ -1181,7 +1303,7 @@ getLockVarsC = \case
 
 -- | Retrieve the lock of the pattern.  The lock can be used to determine the
 -- corresponding indexing structure.
-mkLock :: (Monad m) => Pattern -> MatchT m Lock
+mkLock :: (P.MonadIO m) => Pattern -> MatchT m Lock
 mkLock p = Lock p <$> getLockVars p
 
 

@@ -24,8 +24,9 @@ import           ParComp.ItemDev.Untyped (IsPatt)
 
 -- | Typed representation of a pattern.
 data Pattern a
-  = Patt {unPatt :: U.Pattern}
-  | Cond {unCond :: U.Cond U.Pattern}
+  = Patt {unPatt  :: U.Pattern}
+  | Cond {unCond  :: U.Cond U.Pattern}
+  | FunP  {unFun   :: U.Fun U.Rigit U.Rigit}
   deriving (Show, Eq, Ord)
 
 
@@ -43,11 +44,11 @@ class Op repr where
   and     :: repr a -> repr a -> repr a
   or      :: repr a -> repr a -> repr a
 
-  map     :: (IsPatt a, IsPatt b) => U.Fun a b -> repr a -> repr b
   fun     :: (IsPatt a, IsPatt b) => U.Fun a b -> repr (a -> b)
+  app     :: repr (a -> b) -> repr b
+  map     :: repr (a -> b) -> repr a -> repr b
   via     :: repr (a -> b) -> repr b -> repr a
-  result  :: repr (a -> b) -> repr b
-  expand  :: repr a -> repr (a -> a)
+  -- expand  :: repr a -> repr (a -> a)
 
   -- app     :: (IsPatt a) => U.Fun a a -> repr a
   -- via     :: (IsPatt a, IsPatt b) => U.Fun a b -> repr b -> repr a
@@ -82,15 +83,24 @@ instance Op Pattern where
   const x                   = Patt (U.encodeP x)
 
   and (Patt x) (Patt y)     = Patt (U.viaP x y)
-  or (Patt x) (Patt y)      = Patt (U.orP x y)
+  or  (Patt x) (Patt y)     = Patt (U.orP x y)
 
-  fun f                     = Patt . U.appP $ encodeFun f
-  map f (Patt p)            = Patt $ U.mapP (encodeFun f) p
-  via (Patt f) (Patt x)     = Patt $ U.viaP f x
-  -- via f (Patt x)            = Patt $ U.viaP (U.appP (encodeFun f)) x
+  fun f                     = FunP (encodeFun f)
+  app (FunP f)              = Patt (U.appP f)
 
-  result (Patt f)           = Patt f
-  expand (Patt f)           = Patt f
+  map (FunP f) (Patt x)     = Patt (U.mapP f x)
+  map (Patt f) (Patt x)     = Patt (U.map'P f x)
+  via (Patt f) (Patt x)     = Patt (U.viaP f x)
+
+--   app (Patt f)              = Patt f
+
+--   fun f                     = Patt . U.appP $ encodeFun f
+--   map f (Patt p)            = Patt $ U.mapP (encodeFun f) p
+--   via (Patt f) (Patt x)     = Patt $ U.viaP f x
+--   -- via f (Patt x)            = Patt $ U.viaP (U.appP (encodeFun f)) x
+-- 
+--   app (Patt f)              = Patt f
+--   -- expand (Patt f)           = Patt f
 
   with (Patt x) (Cond c)    = Patt (U.withP x c)
   eq (Patt x) (Patt y)      = Cond (U.Eq x y)
@@ -135,13 +145,13 @@ encodePred p =
 -- | Curry the function and apply it to the given arguments.
 bimap :: (Op repr, IsPatt b, IsPatt c, IsPatt d)
       => U.Fun (b, c) d -> repr b -> repr c -> repr d
-bimap f x y = map f (pair x y)
+bimap f x y = map (fun f) (pair x y)
 
 
 -- | Check if the predicates is satisfied on the current item.
 guard :: (Op repr, IsPatt a) => U.Pred a -> repr a
 guard p =
-  result $ fun f
+  app $ fun f
   where
     f = U.Fun {U.fname = U.pname p, U.fbody = body}
     body x = do
