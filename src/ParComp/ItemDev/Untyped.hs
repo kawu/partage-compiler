@@ -436,8 +436,8 @@ instance (IsPatt a) => IsPatt [a] where
 -- pattern with an item.
 --
 -- Assumption: In case of the `Or` pattern, we assume that both branches
--- contain the same set of global variables (this is currently checked at
--- runtime).
+-- contain the same set of global variables.  This is non-trivial to check at
+-- runtime (and hence is not enforced) due to `Rec` patterns.
 globalVarsIn :: Pattern -> S.Set Var
 globalVarsIn (P ip) = case ip of
   Pair p1 p2 -> globalVarsIn p1 <> globalVarsIn p2
@@ -446,13 +446,13 @@ globalVarsIn (P ip) = case ip of
     Right p -> globalVarsIn p
   _ -> S.empty
 globalVarsIn (O op) = case op of
-  Or x y ->
-    let xs = globalVarsIn x
-        ys = globalVarsIn y
-     in if xs == ys
-           then xs
-           else error "globalVarsIn: different sets of variables in Or"
-  Via p x -> globalVarsIn p <> globalVarsIn x
+  Or x y -> globalVarsIn x <> globalVarsIn y
+--     let xs = globalVarsIn x
+--         ys = globalVarsIn y
+--      in if xs == ys
+--            then xs
+--            else error "globalVarsIn: different sets of variables in Or"
+  Via x y -> globalVarsIn x <> globalVarsIn y
   Label v -> S.singleton v
   Local _ -> error "globalVarsIn: encountered local variable!"
   Any -> S.empty

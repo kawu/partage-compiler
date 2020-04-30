@@ -332,18 +332,20 @@ predict =
   where
     leftP = topItem $ active
       (rule any
-        (via (fun splitAtDot)
-          (pair any (const dot <: var "B" <: any))
-        )
+--         (via (fun splitAtDot)
+--         (via (splitAt (const dot))
+--           (pair any (const dot <: var "B" <: any))
+--         )
+        (suffix $ const dot <: var "B" <: any)
       )
       (span (var "i") (var "j"))
     rightP = topRule $
-      and (rule (var "C") any) (var "rule")
+      rule (var "C") (var "alpha")
     condP = eq
       (map labelB $ var "B")
       (map labelH $ var "C")
     downP = topItem $ active
-      (var "rule")
+      (rule (var "C") (var "alpha"))
       (span (var "j") (var "j"))
 
 
