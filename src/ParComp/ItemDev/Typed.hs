@@ -1,3 +1,8 @@
+{-# LANGUAGE KindSignatures #-}
+
+-- {-# LANGUAGE ScopedTypeVariables #-}
+
+
 -- | This module provides the operations that can be used to construct (typed)
 -- item patterns in the tagless final stile (see e.g.
 -- http://okmij.org/ftp/tagless-final/).
@@ -8,7 +13,7 @@ module ParComp.ItemDev.Typed
   , Op (..)
 
   -- * Utils
-  , bimap
+  -- , bimap
   , guard
   ) where
 
@@ -26,16 +31,49 @@ import           ParComp.ItemDev.Untyped (IsPatt)
 data Pattern a
   = Patt {unPatt  :: U.Pattern}
   | Cond {unCond  :: U.Cond U.Pattern}
-  | FunP  {unFun   :: U.Fun U.Rigit U.Rigit}
+  | FunP {unFun   :: U.Fun U.Rigit U.Rigit}
+  | Vect {unVect  :: [U.Pattern]}
+    -- ^ Vect serves to build vector patterns
   deriving (Show, Eq, Ord)
 
 
--- | Tagless-final encoding of operations supported by patterns.
-class Op repr where
 
-  pair    :: repr a -> repr b -> repr (a, b)
-  cons    :: repr a -> repr [a] -> repr [a]
-  nil     :: repr [a]
+-- -- | An existential type encapsulating types that are representable.
+-- data Repr repr = forall a . MkRepr (repr a)
+
+
+-- -- | An existential builder for representable objects.
+-- pack :: repr a -> Repr repr
+-- pack = MkRepr
+
+
+-- | Encoding of operations for building data structures.
+class Build repr where
+  nil     :: repr (a, a)
+  cons    :: repr a -> repr (b, c) -> repr (a -> b, c)
+  vec     :: a -> repr (a, b) -> repr b
+
+instance Build Pattern where
+  nil                       = Vect [] 
+  cons (Patt x) (Vect xs)   = Vect (x:xs)
+  vec _ (Vect xs)           = Patt (U.vecP xs)
+
+
+data S a = S a
+
+single :: Build repr => repr a -> repr (S a)
+single x = vec S $ cons x nil
+
+pair' :: Build repr => repr a -> repr b -> repr (a, b)
+pair' x y = vec (,) $ cons x (cons y nil)
+
+
+-- | Tagless-final encoding of operations supported by patterns.
+class Op (repr :: * -> *) where
+
+--   pair    :: repr a -> repr b -> repr (a, b)
+--   cons    :: repr a -> repr [a] -> repr [a]
+--   nil     :: repr [a]
 
   any     :: repr a
   var     :: T.Text -> repr a
@@ -74,9 +112,9 @@ class Op repr where
 -- the `IsPatt` class.
 instance Op Pattern where
 
-  pair   (Patt x) (Patt y)  = Patt (U.pairP x y)
-  cons   (Patt x) (Patt y)  = Patt (U.rightP $ U.pairP x y)
-  nil                       = Patt (U.leftP U.unitP)
+--   pair   (Patt x) (Patt y)  = Patt (U.pairP x y)
+--   cons   (Patt x) (Patt y)  = Patt (U.rightP $ U.pairP x y)
+--   nil                       = Patt (U.leftP U.unitP)
 
   any                       = Patt U.anyP
   var v                     = Patt (U.labelP $ U.Var v)
@@ -142,10 +180,10 @@ encodePred p =
 --------------------------------------------------
 
 
--- | Curry the function and apply it to the given arguments.
-bimap :: (Op repr, IsPatt b, IsPatt c, IsPatt d)
-      => U.Fun (b, c) d -> repr b -> repr c -> repr d
-bimap f x y = map (fun f) (pair x y)
+-- -- | Curry the function and apply it to the given arguments.
+-- bimap :: (Op repr, IsPatt b, IsPatt c, IsPatt d)
+--       => U.Fun (b, c) d -> repr b -> repr c -> repr d
+-- bimap f x y = map (fun f) (pair x y)
 
 
 -- | Check if the predicates is satisfied on the current item.

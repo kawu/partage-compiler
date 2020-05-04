@@ -399,6 +399,64 @@ predict =
 
 
 --------------------------------------------------
+-- Temp 
+--------------------------------------------------
+
+
+type Top' = Either Active' DotRule'
+type Active' = (DotRule', Span')
+type DotRule' = (Head', Body')
+type Head' = Node'
+type Body' = [Maybe Node']
+type Node' = T.Text
+type Sym' = T.Text
+type Span' = (Int, Int)
+
+
+-- | Typed deduction rule
+data Rule' repr = Rule'
+  { antecedents'  :: [repr Top']
+  , consequent'   :: repr Top'
+  , sideCond'     :: repr Bool
+  }
+
+
+-- | Compile the rule to its untyped counterpart.
+compileRule' :: Rule' Pattern -> U.Rule
+compileRule' Rule'{..} = U.Rule
+  { U.antecedents = P.map Ty.unPatt antecedents'
+  , U.consequent  = Ty.unPatt consequent'
+  , U.condition   = Ty.unCond sideCond'
+  }
+
+
+-- | CFG predict rule
+predict' :: U.Rule
+predict' =
+  compileRule $
+    Rule [leftP, rightP] downP condP
+  where
+    leftP = undefined
+--       (rule any
+--         (suffix $ const dot <: var "B" <: any)
+--       )
+--       (span (var "i") (var "j"))
+    rightP = undefined
+--     rightP = topRule $
+--       rule (var "C")
+--         ( (var "alpha" :: Pattern Body)
+--         )
+    condP = undefined
+--     condP = eq
+--       (map (fun labelB) $ var "B")
+--       (map (fun labelH) $ var "C")
+    downP = undefined
+--     downP = topItem $ active
+--       (rule (var "C") (var "alpha"))
+--       (span (var "j") (var "j"))
+
+
+--------------------------------------------------
 -- Axioms 
 --------------------------------------------------
 

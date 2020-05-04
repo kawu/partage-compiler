@@ -28,6 +28,8 @@ dependencies:
 - pipes >= 4.3 && < 4.4
 - data-lens-light >= 0.1 && < 0.2
 - random >= 1.1 && < 1.2
+# - vector >= 0.12 && < 0.13
+- primitive >= 0.7 && < 0.8
 
 library:
   source-dirs: src

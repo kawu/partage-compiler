@@ -44,9 +44,11 @@ module ParComp.ItemDev.Untyped
   -- ** Smart constructors
   , unitP
   , symP
-  , pairP
-  , leftP
-  , rightP
+  , vecP
+  , tagP
+--   , pairP
+--   , leftP
+--   , rightP
 
   , orP
   , viaP
@@ -103,8 +105,11 @@ import qualified Pipes as P
 
 import           Data.Lens.Light
 
+import qualified Data.Primitive.Array as A
+
 import           Data.Void (Void)
 import           Data.String (IsString)
+-- import qualified Data.Foldable as F
 import qualified Data.Text as T
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -120,9 +125,23 @@ import           Debug.Trace (trace)
 -- | Chart item expression
 data Item expr where
   Unit  :: Item expr
-  Sym   :: T.Text -> Item expr
-  Pair  :: expr -> expr -> Item expr
-  Union :: Either expr expr -> Item expr
+  Sym   :: {-# UNPACK #-} !T.Text -> Item expr
+
+--   Pair  :: expr -> expr -> Item expr
+--   Union :: Either expr expr -> Item expr
+
+  -- New primitives below
+
+  Vec   :: A.Array expr -> Item expr
+  -- ^ Non-empty vector of expressions (to represent product types)
+  -- (TODO: or maybe we could/should use it to represent unit, too?)
+
+  Tag   :: {-# UNPACK #-} !Int -> expr -> Item expr
+  -- ^ Tagged expression (to represent sum types)
+
+--   Num   :: {-# UNPACK #-} !Int -> Item expr
+--   -- ^ Integral number
+
   deriving (Show, Eq, Ord)
 
 
@@ -139,9 +158,25 @@ unI (I x) = x
 -- | Rigit constructors
 unit      = I Unit
 sym x     = I $ Sym x
-pair x y  = I $ Pair x y
-left x    = I . Union $ Left x
-right y   = I . Union $ Right y
+-- pair x y  = I $ Pair x y
+-- left x    = I . Union $ Left x
+-- right y   = I . Union $ Right y
+
+
+-- | Construct a vector of `Rigit`s.
+vec :: A.Array Rigit -> Rigit
+vec = I . Vec
+  -- . A.fromList
+
+
+-- | Construct a tagged `Rigit`.
+tag :: Int -> Rigit -> Rigit
+tag k = I . Tag k
+
+
+-- -- | Construct a numeral `Rigit`.
+-- num :: Int -> Rigit
+-- num = I . Num
 
 
 --------------------------------------------------
@@ -237,7 +272,8 @@ data Op t
   -- ^ Mapping: match the pattern with the item and apply the function to the
   -- result.
   | Map' t t
-  -- ^ Mapping: ???
+  -- ^ Mapping: match the (second) pattern with the item and apply the first,
+  -- functional pattern to the result.
   | App (Fun Rigit Rigit)
   -- ^ Application: apply the function to the item before pattern matching.
   | With t (Cond t)
@@ -286,9 +322,9 @@ data Pattern
 -- | Pattern constructors
 unitP       = P $ Unit
 symP x      = P $ Sym x
-pairP x y   = P $ Pair x y
-leftP x     = P . Union $ Left x
-rightP y    = P . Union $ Right y
+-- pairP x y   = P $ Pair x y
+-- leftP x     = P . Union $ Left x
+-- rightP y    = P . Union $ Right y
 
 viaP x y    = O $ Via x y
 orP x y     = O $ Or x y
@@ -304,6 +340,17 @@ fixP p      = O $ Fix p
 recP        = O $ Rec
 
 
+-- | Construct a vector of `Pattern`s.
+vecP :: [Pattern] -> Pattern
+-- vecP :: A.Array Pattern -> Pattern
+vecP = P . Vec . A.fromList
+
+
+-- | Construct a tagged `Pattern`.
+tagP :: Int -> Pattern -> Pattern
+tagP k = P . Tag k
+
+
 -- | Convert the pattern to the corresponding item expression, in case it does
 -- not use any `Op`s (pattern specific operations/constructions).
 strip :: Pattern -> Rigit
@@ -311,10 +358,12 @@ strip = \case
   P ip -> case ip of
     Unit  -> unit
     Sym x -> sym x
-    Pair x y -> pair (strip x) (strip y)
-    Union u -> case u of
-      Left x  -> left  $ strip x
-      Right y -> right $ strip y
+--     Pair x y -> pair (strip x) (strip y)
+    Vec v -> vec (fmap strip v)
+--     Union u -> case u of
+--       Left x  -> left  $ strip x
+--       Right y -> right $ strip y
+    Tag k x -> tag k (strip x)
   O op -> error $ "cannot strip pattern with Op: " ++ show (O op)
 
 
@@ -361,17 +410,30 @@ instance IsPatt () where
   encode mkP _ = mkP Unit
   decode unP _ = ()
 
+-- TODO: re-implement based on Num?
 instance IsPatt Bool where
   encode mkP = \case
-    False -> mkP . Union . Left  $ mkP Unit
-    True  -> mkP . Union . Right $ mkP Unit
+    False -> mkP . Tag 0 $ mkP Unit
+    True  -> mkP . Tag 1 $ mkP Unit
   decode unP x =
     case unP x of
-      Union u -> case u of
-        Left  _ -> False
-        Right _ -> True
+      Tag k _ -> case k of
+        0 -> False
+        1 -> True
       _ -> error $ "cannot decode " ++ show x ++ " to Bool"
 
+-- instance IsPatt Bool where
+--   encode mkP = \case
+--     False -> mkP . Union . Left  $ mkP Unit
+--     True  -> mkP . Union . Right $ mkP Unit
+--   decode unP x =
+--     case unP x of
+--       Union u -> case u of
+--         Left  _ -> False
+--         Right _ -> True
+--       _ -> error $ "cannot decode " ++ show x ++ " to Bool"
+
+-- TODO: re-implement based on Num?
 instance IsPatt Int where
   encode mkP = mkP . Sym . T.pack . show
   decode unP p = case unP p of
@@ -385,51 +447,102 @@ instance IsPatt T.Text where
     _ -> error $ "cannot decode " ++ show p ++ " to Text"
 
 instance (IsPatt a, IsPatt b) => IsPatt (a, b) where
-  encode mkP (x, y) = mkP $ Pair (encode mkP x) (encode mkP y)
+  encode mkP (x, y) = mkP . Vec $
+    A.fromListN 2 [encode mkP x, encode mkP y]
   decode unP p = case unP p of
-    Pair x y -> (decode unP x, decode unP y)
+    Vec v -> (decode unP (A.indexArray v 0), decode unP (A.indexArray v 1))
     _ -> error $ "cannot decode " ++ show p ++ " to (,)"
 
+-- instance (IsPatt a, IsPatt b) => IsPatt (a, b) where
+--   encode mkP (x, y) = mkP $ Pair (encode mkP x) (encode mkP y)
+--   decode unP p = case unP p of
+--     Pair x y -> (decode unP x, decode unP y)
+--     _ -> error $ "cannot decode " ++ show p ++ " to (,)"
+
 instance (IsPatt a, IsPatt b, IsPatt c) => IsPatt (a, b, c) where
-  encode mkP (x, y, z) =
-    mkP $ Pair (encode mkP x) (mkP $ Pair (encode mkP y) (encode mkP z))
+  encode mkP (x, y, z) = mkP . Vec $
+    A.fromListN 3 [encode mkP x, encode mkP y, encode mkP z]
   decode unP p = case unP p of
-    Pair x p' -> case unP p' of
-      Pair y z -> (decode unP x, decode unP y, decode unP z)
+    Vec v -> 
+      ( decode unP (A.indexArray v 0)
+      , decode unP (A.indexArray v 1)
+      , decode unP (A.indexArray v 2)
+      )
     _ -> error $ "cannot decode " ++ show p ++ " to (,,)"
+
+-- instance (IsPatt a, IsPatt b, IsPatt c) => IsPatt (a, b, c) where
+--   encode mkP (x, y, z) =
+--     mkP $ Pair (encode mkP x) (mkP $ Pair (encode mkP y) (encode mkP z))
+--   decode unP p = case unP p of
+--     Pair x p' -> case unP p' of
+--       Pair y z -> (decode unP x, decode unP y, decode unP z)
+--     _ -> error $ "cannot decode " ++ show p ++ " to (,,)"
 
 instance (IsPatt a) => IsPatt (Maybe a) where
   encode mkP = \case
-    Nothing -> mkP . Union . Left  $ mkP Unit
-    Just x  -> mkP . Union . Right $ encode mkP x
+    Nothing -> mkP . Tag 0 $ mkP Unit
+    Just x  -> mkP . Tag 1 $ encode mkP x
   decode unP p = case unP p of
-    Union u -> case u of
-      Left _  -> Nothing
-      Right x -> Just (decode unP x)
+    Tag k x -> case k of
+      0 -> Nothing
+      1 -> Just (decode unP x)
     _ -> error $ "cannot decode " ++ show p ++ " to Maybe"
+
+-- instance (IsPatt a) => IsPatt (Maybe a) where
+--   encode mkP = \case
+--     Nothing -> mkP . Union . Left  $ mkP Unit
+--     Just x  -> mkP . Union . Right $ encode mkP x
+--   decode unP p = case unP p of
+--     Union u -> case u of
+--       Left _  -> Nothing
+--       Right x -> Just (decode unP x)
+--     _ -> error $ "cannot decode " ++ show p ++ " to Maybe"
 
 instance (IsPatt a, IsPatt b) => IsPatt (Either a b) where
   encode mkP = \case
-    Left x  -> mkP . Union . Left  $ encode mkP x
-    Right y -> mkP . Union . Right $ encode mkP y
+    Left x  -> mkP . Tag 0 $ encode mkP x
+    Right y -> mkP . Tag 1 $ encode mkP y
   decode unP p = case unP p of
-    Union u -> case u of
-      Left x  -> Left  $ decode unP x
-      Right y -> Right $ decode unP y
+    Tag k x -> case k of
+      0 -> Left  $ decode unP x
+      1 -> Right $ decode unP x
     _ -> error $ "cannot decode " ++ show p ++ " to Either"
+
+-- instance (IsPatt a, IsPatt b) => IsPatt (Either a b) where
+--   encode mkP = \case
+--     Left x  -> mkP . Union . Left  $ encode mkP x
+--     Right y -> mkP . Union . Right $ encode mkP y
+--   decode unP p = case unP p of
+--     Union u -> case u of
+--       Left x  -> Left  $ decode unP x
+--       Right y -> Right $ decode unP y
+--     _ -> error $ "cannot decode " ++ show p ++ " to Either"
 
 instance (IsPatt a) => IsPatt [a] where
   encode mkP = \case
-    []      -> mkP . Union . Left  $ mkP Unit
-    x : xs  -> mkP . Union . Right $
-      mkP $ Pair (encode mkP x) (encode mkP xs)
+    []      -> mkP . Tag 0 $ mkP Unit
+    x : xs  -> mkP . Tag 1 $ mkP . Vec $
+      A.fromListN 2 [encode mkP x, encode mkP xs]
   decode unP p = case unP p of
-    Union u -> case u of
-      Left _ -> []
-      Right p' ->
+    Tag k p' -> case k of
+      0 -> []
+      1 ->
         let (x, xs) = decode unP p'
          in x : xs
     _ -> error $ "cannot decode " ++ show p ++ " to []"
+
+-- instance (IsPatt a) => IsPatt [a] where
+--   encode mkP = \case
+--     []      -> mkP . Union . Left  $ mkP Unit
+--     x : xs  -> mkP . Union . Right $
+--       mkP $ Pair (encode mkP x) (encode mkP xs)
+--   decode unP p = case unP p of
+--     Union u -> case u of
+--       Left _ -> []
+--       Right p' ->
+--         let (x, xs) = decode unP p'
+--          in x : xs
+--     _ -> error $ "cannot decode " ++ show p ++ " to []"
 
 
 --------------------------------------------------
@@ -447,10 +560,12 @@ instance (IsPatt a) => IsPatt [a] where
 -- runtime (and hence is not enforced) due to `Rec` patterns.
 globalVarsIn :: Pattern -> S.Set Var
 globalVarsIn (P ip) = case ip of
-  Pair p1 p2 -> globalVarsIn p1 <> globalVarsIn p2
-  Union up -> case up of
-    Left p  -> globalVarsIn p
-    Right p -> globalVarsIn p
+--   Pair p1 p2 -> globalVarsIn p1 <> globalVarsIn p2
+  Vec v -> foldMap globalVarsIn v
+--   Union up -> case up of
+--     Left p  -> globalVarsIn p
+--     Right p -> globalVarsIn p
+  Tag _ x -> globalVarsIn x
   _ -> S.empty
 globalVarsIn (O op) = case op of
   Or x y -> globalVarsIn x <> globalVarsIn y
@@ -804,16 +919,30 @@ match ms (P ip) (I it) =
     (Sym x, Sym y) -> do
       guard $ x == y
       return $ sym x
-    (Pair p1 p2, Pair i1 i2) ->
-      pair <$> match ms p1 i1 <*> match ms p2 i2
-    (Union pu, Union iu) ->
-      case (pu, iu) of
-        (Left pl, Left il) ->
-          left <$> match ms pl il
-        (Right pr, Right ir) ->
-          right <$> match ms pr ir
-        -- Fail otherwise
-        _ -> empty
+--     (Pair p1 p2, Pair i1 i2) ->
+--       pair <$> match ms p1 i1 <*> match ms p2 i2
+    (Vec v1, Vec v2) -> do
+      let n = A.sizeofArray v1
+          m = A.sizeofArray v2
+      if n /= m
+         then error $ "match fail due to length mismatch: " ++ show (v1, v2)
+         else return ()
+      -- TODO: could this be optimized?
+      ys <- forM [0..n-1] $ \k -> do
+        match ms (A.indexArray v1 k) (A.indexArray v2 k)
+        -- pair <$> match ms p1 i1 <*> match ms p2 i2
+      return . vec $ A.fromListN n ys
+--     (Union pu, Union iu) ->
+--       case (pu, iu) of
+--         (Left pl, Left il) ->
+--           left <$> match ms pl il
+--         (Right pr, Right ir) ->
+--           right <$> match ms pr ir
+--         -- Fail otherwise
+--         _ -> empty
+    (Tag k x, Tag k' y) -> do
+      guard $ k == k'
+      match ms x y
     _ -> error $ "match fail: " ++ show (ip, it)
 match ms (O op) it =
   case (op, it) of
@@ -1028,11 +1157,13 @@ close p =
 --       Const it -> pure it
       Unit -> pure unit
       Sym x -> pure $ sym x
-      Pair p1 p2 -> pair <$> close p1 <*> close p2
-      Union up ->
-        case up of
-          Left lp  -> left <$> close lp
-          Right rp -> right <$> close rp
+--       Pair p1 p2 -> pair <$> close p1 <*> close p2
+      Vec v -> vec <$> mapM close v
+--       Union up ->
+--         case up of
+--           Left lp  -> left <$> close lp
+--           Right rp -> right <$> close rp
+      Tag k x -> tag k <$> close x
 
     byCase (O op) = case op of
       -- Fail (silently) if variable x not bound
@@ -1096,11 +1227,13 @@ close p =
 -- | Is the given pattern possible to close?
 closeable :: (P.MonadIO m) => Pattern -> MatchT m Bool
 closeable (P ip) = case ip of
-  Pair p1 p2 -> (&&) <$> closeable p1 <*> closeable p2
-  Union up ->
-    case up of
-      Left lp  -> closeable lp
-      Right rp -> closeable rp
+--   Pair p1 p2 -> (&&) <$> closeable p1 <*> closeable p2
+  Vec v -> and <$> mapM closeable v
+--   Union up ->
+--     case up of
+--       Left lp  -> closeable lp
+--       Right rp -> closeable rp
+  Tag _ x -> closeable x
   Unit  -> pure True
   Sym _ -> pure True
 closeable (O op) = case op of
@@ -1239,10 +1372,12 @@ getLockVars (P ip) = case ip of
 --   Const _ -> pure S.empty
   Unit -> pure S.empty
   Sym _ -> pure S.empty
-  Pair p1 p2 -> (<>) <$> getLockVars p1 <*> getLockVars p2
-  Union up -> case up of
-    Left p -> getLockVars p
-    Right p -> getLockVars p
+--   Pair p1 p2 -> (<>) <$> getLockVars p1 <*> getLockVars p2
+  Vec v -> foldMap getLockVars v
+--   Union up -> case up of
+--     Left p -> getLockVars p
+--     Right p -> getLockVars p
+  Tag _ x -> getLockVars x
 getLockVars (O op) = case op of
   Label v ->
     lookupVar v >>= \case
