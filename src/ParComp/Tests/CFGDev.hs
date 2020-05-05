@@ -33,7 +33,7 @@ import qualified ParComp.ItemDev.Untyped as U
 import           ParComp.ItemDev.Untyped (Fun(..), Pred(..), IsPatt(..))
 import qualified ParComp.ItemDev.Typed as Ty
 import           ParComp.ItemDev.Typed
-  (Pattern(..), Op(..), bimap, guard)
+  (Pattern(..), Op(..), pair, nil, cons, left, right, bimap, guard)
 import           ParComp.ParserDev (chartParse)
 
 import           Debug.Trace (trace)
@@ -69,28 +69,53 @@ type Active = (DotRule, Span)
 type Top = Either Active DotRule
 
 
--- | Item tagless-final representation
-class Item repr where
-  topItem :: repr Active -> repr Top
-  topRule :: repr DotRule -> repr Top
-  active  :: repr DotRule -> repr Span -> repr Active
-  span    :: repr Int -> repr Int -> repr Span
-  pos     :: Int -> repr Int
-  rule    :: repr Head -> repr Body -> repr DotRule
-  head    :: Node -> repr Head
-  body    :: Body -> repr Body
+topItem :: Op repr => repr Active -> repr Top
+topItem = left
 
--- NB: The implementation of the individual functions must be consistent with
--- the `IsPatt` class.
-instance Item Pattern where
-  topItem (Patt it) = Patt (U.leftP it)
-  topRule (Patt r)  = Patt (U.rightP r)
-  active (Patt r) (Patt s) = Patt (U.pairP r s)
-  span (Patt x) (Patt y) = Patt (U.pairP x y)
-  rule (Patt h) (Patt b) = Patt (U.pairP h b)
-  pos i   = Patt $ U.encodeP i
-  head x  = Patt $ U.encodeP x
-  body x  = Patt $ U.encodeP x
+topRule :: Op repr => repr DotRule -> repr Top
+topRule = right
+
+active :: Op repr => repr DotRule -> repr Span -> repr Active
+active = pair
+
+rule :: Op repr => repr Head -> repr Body -> repr DotRule
+rule = pair
+
+span :: Op repr => repr Int -> repr Int -> repr Span
+span = pair
+
+pos :: Op repr => Int -> repr Int
+pos = const
+
+head :: Op repr => Node -> repr Head
+head = const
+
+body :: Op repr => Body -> repr Body
+body = const
+
+
+-- -- | Item tagless-final representation
+-- class Item repr where
+--   topItem :: repr Active -> repr Top
+--   topRule :: repr DotRule -> repr Top
+--   active  :: repr DotRule -> repr Span -> repr Active
+--   span    :: repr Int -> repr Int -> repr Span
+--   pos     :: Int -> repr Int
+--   rule    :: repr Head -> repr Body -> repr DotRule
+--   head    :: Node -> repr Head
+--   body    :: Body -> repr Body
+-- 
+-- -- NB: The implementation of the individual functions must be consistent with
+-- -- the `IsPatt` class.
+-- instance Item Pattern where
+--   topItem (Patt it) = Patt (U.leftP it)
+--   topRule (Patt r)  = Patt (U.rightP r)
+--   active (Patt r) (Patt s) = Patt (U.pairP r s)
+--   span (Patt x) (Patt y) = Patt (U.pairP x y)
+--   rule (Patt h) (Patt b) = Patt (U.pairP h b)
+--   pos i   = Patt $ U.encodeP i
+--   head x  = Patt $ U.encodeP x
+--   body x  = Patt $ U.encodeP x
 
 
 -- | Dot in a dotted rule
@@ -334,8 +359,8 @@ complete =
 
     leftP = topItem $ active
       (rule v_A
-        -- (via (fun splitAtDot)
-        (via (splitAt (const dot))
+        (via (fun splitAtDot)
+        -- (via (splitAt (const dot))
           (pair v_alpha (const dot <: v_B <: v_beta))
         )
       )
@@ -345,7 +370,6 @@ complete =
       (rule v_C
         -- (guard endsWithDotP)
         (suffix $ const dot <: nil)
-        -- (removeSuffix (const dot) any)
       )
       (span v_j v_k)
 
@@ -396,64 +420,6 @@ predict =
     downP = topItem $ active
       (rule (var "C") (var "alpha"))
       (span (var "j") (var "j"))
-
-
---------------------------------------------------
--- Temp 
---------------------------------------------------
-
-
-type Top' = Either Active' DotRule'
-type Active' = (DotRule', Span')
-type DotRule' = (Head', Body')
-type Head' = Node'
-type Body' = [Maybe Node']
-type Node' = T.Text
-type Sym' = T.Text
-type Span' = (Int, Int)
-
-
--- | Typed deduction rule
-data Rule' repr = Rule'
-  { antecedents'  :: [repr Top']
-  , consequent'   :: repr Top'
-  , sideCond'     :: repr Bool
-  }
-
-
--- | Compile the rule to its untyped counterpart.
-compileRule' :: Rule' Pattern -> U.Rule
-compileRule' Rule'{..} = U.Rule
-  { U.antecedents = P.map Ty.unPatt antecedents'
-  , U.consequent  = Ty.unPatt consequent'
-  , U.condition   = Ty.unCond sideCond'
-  }
-
-
--- | CFG predict rule
-predict' :: U.Rule
-predict' =
-  compileRule $
-    Rule [leftP, rightP] downP condP
-  where
-    leftP = undefined
---       (rule any
---         (suffix $ const dot <: var "B" <: any)
---       )
---       (span (var "i") (var "j"))
-    rightP = undefined
---     rightP = topRule $
---       rule (var "C")
---         ( (var "alpha" :: Pattern Body)
---         )
-    condP = undefined
---     condP = eq
---       (map (fun labelB) $ var "B")
---       (map (fun labelH) $ var "C")
-    downP = undefined
---     downP = topItem $ active
---       (rule (var "C") (var "alpha"))
---       (span (var "j") (var "j"))
 
 
 --------------------------------------------------
@@ -532,13 +498,15 @@ testCFGDev = do
         [ ("CO", complete)
         , ("PR", predict)
         ]
-      pos = U.I . U.Sym . T.pack . show
       zero = pos 0
       slen = pos (length sent)
-      isFinal = \case
-        U.I (U.Union (Left (U.I (U.Pair _ (U.I (U.Pair i j))))))
-          | i == zero && j == slen -> True
-        _ -> False
+      finalPatt = Ty.unPatt $
+        topItem $ active any (span zero slen)
+      isFinal = U.isMatch finalPatt
+--       isFinal = \case
+--         U.I (U.Union (Left (U.I (U.Pair _ (U.I (U.Pair i j))))))
+--           | i == zero && j == slen -> True
+--         _ -> False
 --   forM_ (S.toList baseItems) print
   chartParse baseItems ruleMap isFinal >>= \case
     Nothing -> putStrLn "# No parse found"

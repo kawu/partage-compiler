@@ -171,6 +171,8 @@ applyDirRule ruleName rule mainItem = do
         U.match U.Strict otherPatt otherItem
 --         liftIO $ do
 --           T.putStrLn "@@@ Matched with Other"
+--           T.putStr "@@@ Closing: "
+--           print (U.dirConseq rule)
         result <- U.close (U.dirConseq rule)
         -- We managed to apply a rule!
 --         liftIO $ do
@@ -196,7 +198,7 @@ chartParse
     -- ^ Axiom-generated items
   -> M.Map T.Text U.Rule
     -- ^ Deduction rules (named)
-  -> (U.Rigit -> Bool)
+  -> (U.Rigit -> IO Bool)
     -- ^ Is the item final?
   -> IO (Maybe U.Rigit)
 chartParse baseItems ruleMap isFinal =
@@ -233,14 +235,16 @@ chartParse baseItems ruleMap isFinal =
     processAgenda = do
       popFromAgenda >>= \case
         Nothing -> return Nothing
-        Just item -> if isFinal item
-          then do
-            addToChart item
-            return $ Just item
-          else do
-            handleItem item
-            addToChart item
-            processAgenda
+        Just item -> do
+          final <- liftIO $ isFinal item
+          if final
+             then do
+               addToChart item
+               return $ Just item
+             else do
+               handleItem item
+               addToChart item
+               processAgenda
 
     -- Try to match the given item with other items already in the chart
     handleItem item = do

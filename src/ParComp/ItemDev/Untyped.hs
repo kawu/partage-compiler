@@ -67,6 +67,8 @@ module ParComp.ItemDev.Untyped
   -- * Matching
   , MatchT
   , MatchingStrategy (..)
+  , isMatch
+  , doMatch
   , lift
   , forEach
   , runMatchT
@@ -102,6 +104,7 @@ import qualified Control.Monad.RWS.Strict as RWS
 import           Control.Applicative (Alternative, (<|>), empty)
 
 import qualified Pipes as P
+import qualified Pipes.Prelude as P
 
 import           Data.Lens.Light
 
@@ -882,6 +885,39 @@ fixed = do
 --       , "' does not exist"
 --       ]
 --     Just fun -> return fun
+
+
+--------------------------------------------------
+-- High-level pattern matching
+--------------------------------------------------
+
+
+-- | Check if the pattern matches with the given item.
+isMatch :: (P.MonadIO m) => Pattern -> Rigit -> m Bool
+isMatch p x =
+  not <$> P.null (P.enumerate (doMatch p x))
+
+
+-- | Perform pattern matching and generate the list of possible global variable
+-- binding environments which satisfy the match.
+doMatch :: (P.MonadIO m) => Pattern -> Rigit -> P.ListT m (Env Var)
+doMatch p x = do
+  P.Select $
+    _doMatch p x P.yield
+
+
+-- | Lower-level handler-based `doMatch`.
+_doMatch
+  :: (P.MonadIO m)
+  => Pattern
+  -> Rigit
+  -> (Env Var -> m ()) -- ^ Monadic handler
+  -> m ()
+_doMatch p x h =
+  runMatchT $ do
+    _ <- match Strict p x
+    e <- RWS.gets $ getL genv
+    lift $ h e
 
 
 --------------------------------------------------

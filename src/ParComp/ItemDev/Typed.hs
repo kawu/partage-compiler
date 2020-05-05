@@ -13,7 +13,12 @@ module ParComp.ItemDev.Typed
   , Op (..)
 
   -- * Utils
-  -- , bimap
+  , pair
+  , left
+  , right
+  , nil
+  , cons
+  , bimap
   , guard
   ) where
 
@@ -37,43 +42,20 @@ data Pattern a
   deriving (Show, Eq, Ord)
 
 
-
--- -- | An existential type encapsulating types that are representable.
--- data Repr repr = forall a . MkRepr (repr a)
-
-
--- -- | An existential builder for representable objects.
--- pack :: repr a -> Repr repr
--- pack = MkRepr
-
-
--- | Encoding of operations for building data structures.
-class Build repr where
-  nil     :: repr (a, a)
-  cons    :: repr a -> repr (b, c) -> repr (a -> b, c)
-  vec     :: a -> repr (a, b) -> repr b
-
-instance Build Pattern where
-  nil                       = Vect [] 
-  cons (Patt x) (Vect xs)   = Vect (x:xs)
-  vec _ (Vect xs)           = Patt (U.vecP xs)
-
-
-data S a = S a
-
-single :: Build repr => repr a -> repr (S a)
-single x = vec S $ cons x nil
-
-pair' :: Build repr => repr a -> repr b -> repr (a, b)
-pair' x y = vec (,) $ cons x (cons y nil)
-
-
 -- | Tagless-final encoding of operations supported by patterns.
 class Op (repr :: * -> *) where
 
 --   pair    :: repr a -> repr b -> repr (a, b)
 --   cons    :: repr a -> repr [a] -> repr [a]
 --   nil     :: repr [a]
+
+--   -- TODO: Do we really need this?  Besides, the type is not very nice...
+--   unit    :: repr a
+
+  nix     :: repr (a, a)
+  add     :: repr a -> repr (b, c) -> repr (a -> b, c)
+  build   :: a -> repr (a, b) -> repr b
+  tag     :: Int -> repr a -> repr a
 
   any     :: repr a
   var     :: T.Text -> repr a
@@ -116,6 +98,17 @@ instance Op Pattern where
 --   cons   (Patt x) (Patt y)  = Patt (U.rightP $ U.pairP x y)
 --   nil                       = Patt (U.leftP U.unitP)
 
+--   unit                      = Patt U.unitP
+
+  nix                       = Vect []
+  add  (Patt x) (Vect xs)   = Vect (x:xs)
+  build _ (Vect xs)
+    | len == 0              = Patt U.unitP
+    | len == 1              = Patt (xs !! 0)
+    | otherwise             = Patt (U.vecP xs)
+    where len = length xs
+  tag k (Patt x)            = Patt (U.tagP k x)
+
   any                       = Patt U.anyP
   var v                     = Patt (U.labelP $ U.Var v)
   const x                   = Patt (U.encodeP x)
@@ -129,6 +122,9 @@ instance Op Pattern where
   map (FunP f) (Patt x)     = Patt (U.mapP f x)
   map (Patt f) (Patt x)     = Patt (U.map'P f x)
   via (Patt f) (Patt x)     = Patt (U.viaP f x)
+
+  -- NEW 05.04.2020 (TODO: make sure this is correct)
+  via (FunP f) (Patt x)     = Patt (U.viaP (U.appP f) x)
 
 --   app (Patt f)              = Patt f
 
@@ -180,10 +176,46 @@ encodePred p =
 --------------------------------------------------
 
 
--- -- | Curry the function and apply it to the given arguments.
--- bimap :: (Op repr, IsPatt b, IsPatt c, IsPatt d)
---       => U.Fun (b, c) d -> repr b -> repr c -> repr d
--- bimap f x y = map (fun f) (pair x y)
+-- | Match a pair of patterns.
+pair :: Op repr => repr a -> repr b -> repr (a, b)
+pair x y = build (,) $ add x (add y nix)
+
+
+-- | Match `Nothing` of `Maybe`.
+none :: Op repr => repr (Maybe a)
+none = tag 0 $ build Nothing nix
+
+
+-- | Match `Just` of `Maybe`.
+just :: Op repr => repr a -> repr (Maybe a)
+just x = tag 1 . build Just $ add x nix
+
+
+-- | Match `Left` of `Either`.
+left :: Op repr => repr a -> repr (Either a b)
+left x = tag 0 . build Left $ add x nix
+
+
+-- | Match `Right` of `Either`.
+right :: Op repr => repr b -> repr (Either a b)
+right x = tag 1 . build Right $ add x nix
+
+
+-- | Match empty list.
+nil :: Op repr => repr [a]
+nil = tag 0 $ build [] nix
+-- nil = tag 0 unit
+
+
+-- | Match non-empty list.
+cons :: Op repr => repr a -> repr [a] -> repr [a]
+cons x xs = tag 1 . build (:) $ add x (add xs nix)
+
+
+-- | Curry the function and apply it to the given arguments.
+bimap :: (Op repr, IsPatt b, IsPatt c, IsPatt d)
+      => U.Fun (b, c) d -> repr b -> repr c -> repr d
+bimap f x y = map (fun f) (pair x y)
 
 
 -- | Check if the predicates is satisfied on the current item.
