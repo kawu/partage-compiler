@@ -11,7 +11,6 @@
 module ParComp.Tests.CFGDev
   ( testCFGDev
   , suffix
-  , testAppEnd
   , testX
   , testMatch
   ) where
@@ -261,7 +260,7 @@ suffix p = fix $ or p (any <: rec)
 --
 splitAt :: forall repr a. (Op repr) => repr a -> repr ([a] -> ([a], [a]))
 splitAt p =
-  fix $ p1 `or` (p2 `or` p3)
+  fix $ p1 `or` p2
   where
     p1 = letIn
       ((p <: any) `and` local "suff")
@@ -272,7 +271,6 @@ splitAt p =
         (pair (local "xs") (local "ys"))
       )
       (pair (local "x" <: local "xs") (local "ys"))
-    p3 = letIn nil (pair nil nil)
 
     -- NB: defining and annotating `splitRec` is optional, but it allows to
     -- verify that the types (of `fix` and `rec`) match.
@@ -301,29 +299,54 @@ append' xs ys = map (appendEnd ys) xs
 --------------------------------------------------
 
 
-testAppEnd :: Pattern (Body -> Body)
-testAppEnd = appendEnd nil
+-- testAppEnd :: Pattern (Body -> Body)
+-- testAppEnd = appendEnd nil
 
 
-testX :: Body
-testX = [Nothing, Just "a"]
+-- testX :: Body
+-- testX = [Nothing, Just "a"]
 
 
-testMatch :: IO ()
-testMatch = U.runMatchT $ do
-  let f = unPatt testAppEnd
-      x = U.encodeI testX
-  it' <- U.match U.Strict f x
-  U.lift $ do
-    putStr "f   : " >> print f
-    putStr "x   : " >> print testX
-    putStr "it' : " >> print (U.decodeI it' :: Body)
+-- testMatch :: IO ()
+-- testMatch = U.runMatchT $ do
+--   let f = unPatt testAppEnd
+--       x = U.encodeI testX
+--   it' <- U.match U.Strict f x
+--   U.lift $ do
+--     putStr "f   : " >> print f
+--     putStr "x   : " >> print testX
+--     putStr "it' : " >> print (U.decodeI it' :: Body)
 
 
 -- testApp :: Pattern [Int]
 -- testApp = append'
 --   (const 1 <: const 2 <: nil)
 --   (const 3 <: const 4 <: nil)
+
+
+-- testSplitAt :: Pattern ([Int] -> ([Int], [Int]))
+testSplitAt1 :: Pattern ([Int] -> ([Int], [Int]))
+testSplitAt1 = splitAt (const 1)
+
+
+-- testSplitAtAny :: Pattern ([a] -> ([a], [a]))
+-- testSplitAtAny = splitAt any
+
+
+testX :: [Int]
+testX = [0, 1, 2]
+
+
+testMatch :: IO ()
+testMatch = U.runMatchT $ do
+  let f  = unPatt testSplitAt1
+  -- let f  = unPatt (app . fun $ _splitAt "splitAt 1" (1 :: Int))
+      xs = U.encodeI testX
+  it <- U.match U.Strict f xs
+  U.lift $ do
+    putStr "f : " >> print f
+    putStr "x : " >> print testX
+    putStr "it: " >> print (U.decodeI it :: ([Int], [Int]))
 
 
 --------------------------------------------------
@@ -359,8 +382,8 @@ complete =
 
     leftP = topItem $ active
       (rule v_A
-        (via (fun splitAtDot)
-        -- (via (splitAt (const dot))
+        -- (via (fun splitAtDot)
+        (via (splitAt (const dot))
           (pair v_alpha (const dot <: v_B <: v_beta))
         )
       )
@@ -379,8 +402,8 @@ complete =
 
     downP = topItem $ active
       (rule v_A
-        (append'
-        -- (bimap append
+        -- (append'
+        (bimap append
           v_alpha
           (v_B <: const dot <: v_beta)
         )

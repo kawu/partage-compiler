@@ -978,7 +978,7 @@ match ms (P ip) (I it) =
 --         _ -> empty
     (Tag k x, Tag k' y) -> do
       guard $ k == k'
-      match ms x y
+      tag k <$> match ms x y
     _ -> error $ "match fail: " ++ show (ip, it)
 match ms (O op) it =
   case (op, it) of
@@ -1047,23 +1047,28 @@ match ms (O op) it =
     (Via p x, it) -> do
       it' <- match ms p it
 --       P.liftIO $ do
---         putStrLn "!!! Matching Via"
+--         putStrLn "!!! Matching Via #1"
 --         putStr "p: " >> print p
 --         putStr "x: " >> print x
 --         putStr "it: " >> print it
 --         putStr "it': " >> print it'
-      match ms x it'
+      z <- match ms x it'
+--       P.liftIO $ do
+--         putStrLn "!!! Matching Via #2"
+--         putStr "z: " >> print z
+--         putStrLn "!!! Matching Via END #3"
+      return z
     (With p c, it) -> do
       match ms p it
       check ms c
       return it
     (Let x e y, it) -> do
---       mark <- (`mod` 1000) <$> P.liftIO (R.randomIO :: IO Int)
+      mark <- (`mod` 1000) <$> P.liftIO (R.randomIO :: IO Int)
 --       RWS.gets (getL lenv) >>= \lvs -> P.liftIO $ do
 --         putStr "!!! Let0 #" >> print mark
 --         putStr "lvs : " >> print lvs
       it' <- match ms e it
---       -- Temporary test below
+      -- Temporary test below
 --       if (it /= it')
 --          then error "it /= it'"
 --          else return ()
@@ -1084,6 +1089,7 @@ match ms (O op) it =
 --           putStr "!!! Let3 #" >> print mark
 --           putStr "z   : " >> print z
 --           putStr "lvs : " >> print lvs
+--           putStrLn "!!! Let4 END #"
         return z
     (Fix p, it) -> do
       withFix p $ do
