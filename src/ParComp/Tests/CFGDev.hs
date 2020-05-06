@@ -32,7 +32,9 @@ import qualified ParComp.ItemDev.Untyped as U
 import           ParComp.ItemDev.Untyped (Fun(..), Pred(..), IsPatt(..))
 import qualified ParComp.ItemDev.Typed as Ty
 import           ParComp.ItemDev.Typed
-  (Pattern(..), Op(..), pair, nil, cons, left, right, bimap, guard)
+  ( Pattern(..), Op(..), pair, nothing, just, nil, cons
+  , left, right, bimap, guard
+  )
 import           ParComp.ParserDev (chartParse)
 
 import           Debug.Trace (trace)
@@ -89,37 +91,9 @@ pos = const
 head :: Op repr => Node -> repr Head
 head = const
 
-body :: Op repr => Body -> repr Body
-body = const
-
-
--- -- | Item tagless-final representation
--- class Item repr where
---   topItem :: repr Active -> repr Top
---   topRule :: repr DotRule -> repr Top
---   active  :: repr DotRule -> repr Span -> repr Active
---   span    :: repr Int -> repr Int -> repr Span
---   pos     :: Int -> repr Int
---   rule    :: repr Head -> repr Body -> repr DotRule
---   head    :: Node -> repr Head
---   body    :: Body -> repr Body
--- 
--- -- NB: The implementation of the individual functions must be consistent with
--- -- the `IsPatt` class.
--- instance Item Pattern where
---   topItem (Patt it) = Patt (U.leftP it)
---   topRule (Patt r)  = Patt (U.rightP r)
---   active (Patt r) (Patt s) = Patt (U.pairP r s)
---   span (Patt x) (Patt y) = Patt (U.pairP x y)
---   rule (Patt h) (Patt b) = Patt (U.pairP h b)
---   pos i   = Patt $ U.encodeP i
---   head x  = Patt $ U.encodeP x
---   body x  = Patt $ U.encodeP x
-
-
 -- | Dot in a dotted rule
-dot :: Maybe Node
-dot = Nothing
+dot :: Op repr => repr (Maybe Node)
+dot = nothing
 
 
 --------------------------------------------------
@@ -146,7 +120,7 @@ consList = Fun "consList" $ \(x, xs) -> do
 
 -- | Split at dot.
 splitAtDot :: Fun Body (Body, Body)
-splitAtDot = _splitAt "splitAtDot" dot
+splitAtDot = _splitAt "splitAtDot" Nothing
 
 
 -- | Split a list at a given value.
@@ -171,7 +145,7 @@ endsWith txt y = Fun txt $ \xs -> do
 
 -- | Make sure that the body of the dotted rule ends with the dot.
 endsWithDot :: Fun Body Body
-endsWithDot = endsWith "endsWithDot" dot
+endsWithDot = endsWith "endsWithDot" Nothing
 
 
 -- | Check if the list ends with dot.  If so, return it as is.
@@ -182,7 +156,7 @@ endsWithP txt y = Pred txt $ \xs ->
 
 -- | Does the body of the dotted rule ends with the dot?
 endsWithDotP :: Pred Body
-endsWithDotP = endsWithP "endsWithDotP" dot
+endsWithDotP = endsWithP "endsWithDotP" Nothing
 
 
 -- | Safe version of `last`
@@ -193,16 +167,16 @@ lastMaybe = \case
   _ : xs -> lastMaybe xs
 
 
--- | Head label
-labelH :: Fun Node Sym
-labelH = Fun "labelH" nodeLabel
+-- | Node label
+label :: Fun Node Sym
+label = Fun "label" nodeLabel
 
 
--- | Body element label
-labelB :: Fun (Maybe Node) Sym
-labelB = Fun "labelB" $ \case
-  Nothing -> error "labelB: encountered Nothing"
-  Just x -> nodeLabel x
+-- -- | Body element label
+-- labelB :: Fun (Maybe Node) Sym
+-- labelB = Fun "labelB" $ \case
+--   Nothing -> error "labelB: encountered Nothing"
+--   Just x -> nodeLabel x
 
 
 -- | Determine the label of the node.
@@ -354,23 +328,6 @@ testMatch = U.runMatchT $ do
 --------------------------------------------------
 
 
--- -- | Typed deduction rule
--- data Rule repr = Rule
---   { antecedents :: [repr Top]
---   , consequent  :: repr Top
---   , sideCond    :: repr Bool
---   }
--- 
--- 
--- -- | Compile the rule to its untyped counterpart.
--- compileRule :: Rule Pattern -> U.Rule
--- compileRule Rule{..} = U.Rule
---   { U.antecedents = P.map Ty.unPatt antecedents
---   , U.consequent  = Ty.unPatt consequent
---   , U.condition   = Ty.unCond sideCond
---   }
-
-
 -- | CFG complete rule
 complete :: Ty.Rule Top
 complete =
@@ -381,37 +338,37 @@ complete =
 
     leftP = topItem $ active
       (rule v_A
-        -- (via (fun splitAtDot)
-        (via (splitAt (const dot))
-          (pair v_alpha (const dot <: v_B <: v_beta))
+        (via (fun splitAtDot)
+        -- (via (splitAt dot)
+          (pair v_alpha (dot <: just v_B <: v_beta))
         )
       )
       (span v_i v_j)
 
     rightP = topItem $ active
       (rule v_C
-        -- (guard endsWithDotP)
-        (suffix $ const dot <: nil)
+        (guard endsWithDotP)
+        -- (suffix $ const dot <: nil)
       )
       (span v_j v_k)
 
     condP = eq
-      (map (fun labelB) v_B)
-      (map (fun labelH) v_C)
+      (map (fun label) v_B)
+      (map (fun label) v_C)
 
     downP = topItem $ active
       (rule v_A
         -- (append'
         (bimap append
           v_alpha
-          (v_B <: const dot <: v_beta)
+          (just v_B <: dot <: v_beta)
         )
       )
       (span v_i v_k)
 
     -- Variables and their types
     v_A = var "A"         :: Pattern Node
-    v_B = var "B"         :: Pattern (Maybe Node)
+    v_B = var "B"         :: Pattern Node
     v_C = var "C"         :: Pattern Node
     v_alpha = var "alpha" :: Pattern Body
     v_beta = var "beta"   :: Pattern Body
@@ -427,17 +384,14 @@ predict =
   where
     leftP = topItem $ active
       (rule any
-        (suffix $ const dot <: var "B" <: any)
+        (suffix $ dot <: just (var "B") <: any)
       )
       (span (var "i") (var "j"))
     rightP = topRule $
-      rule (var "C")
-        ( (var "alpha" :: Pattern Body)
---           `and` append' (var "alpha" :: Pattern Body) (nil :: Pattern Body)
-        )
+      rule (var "C") (var "alpha")
     condP = eq
-      (map (fun labelB) $ var "B")
-      (map (fun labelH) $ var "C")
+      (map (fun label) (var "B"))
+      (map (fun label) (var "C"))
     downP = topItem $ active
       (rule (var "C") (var "alpha"))
       (span (var "j") (var "j"))
@@ -448,7 +402,7 @@ predict =
 --------------------------------------------------
 
 
--- | Compute the base items for the given sentence and grammar
+-- | Enumerate base items for the given sentence and grammar.
 cfgBaseItems
   :: [T.Text]
     -- ^ Input sentence
@@ -468,37 +422,7 @@ cfgBaseItems inp cfgRules =
     baseRules = do
       (hd, bd) <- S.toList cfgRules
       return $ Right (mkRule hd bd)
-    mkRule hd bd = (hd, Nothing : P.map Just bd)
-
-
--- cfgBaseItems inp cfgRules =
---   S.fromList $ base1 ++ base2 ++ baseRules
---   where
---     n = length inp
---     base1 = do
---       -- Note that we use prediction
---       i <- [0]
---       (ruleHead, ruleBody) <- S.toList cfgRules
---       let theRule = mkRule ruleHead ruleBody
---           theSpan = span (pos i) (pos i)
---           theItem = active theRule theSpan
---           theTop  = topItem theItem
---       return . U.strip $ Ty.unPatt theTop
---     base2 = do
---       (i, term) <- zip [0..n-1] inp
---       let theRule = mkRule term []
---           theSpan = span (pos i) (pos $ i + 1)
---           theItem = active theRule theSpan
---           theTop  = topItem theItem
---       return . U.strip $ Ty.unPatt theTop
---     baseRules = do
---       (ruleHead, ruleBody) <- S.toList cfgRules
---       let theRule = mkRule ruleHead ruleBody
---           theTop  = topRule theRule
---       return . U.strip $ Ty.unPatt theTop
---     mkRule hd bd = rule
---       (head hd)
---       (body $ Nothing : P.map Just bd)
+    mkRule hd bd = (hd, Nothing : fmap Just bd)
 
 
 --------------------------------------------------

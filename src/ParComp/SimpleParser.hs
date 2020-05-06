@@ -13,31 +13,32 @@ module ParComp.SimpleParser
 
 import           Control.Monad (forM_)
 import qualified Control.Monad.State.Strict as ST
+import           Control.Monad.State.Strict (liftIO)
 
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 
-import qualified ParComp.Item as I
-import qualified ParComp.Pattern as P
-import           ParComp.Pattern (Pattern(..))
+import qualified ParComp.ItemDev.Untyped as U
+import qualified ParComp.ItemDev.Typed as Ty
+import           ParComp.ItemDev.Typed (Pattern(..), Op(..))
 
 
 -- | State of the parser
-data State sym = State
-  { agenda :: S.Set (I.Item sym)
-  , chart :: S.Set (I.Item sym)
+data State = State
+  { agenda :: S.Set U.Rigit
+  , chart :: S.Set U.Rigit
   } deriving (Show, Eq, Ord)
 
 
 -- | Empty state
-emptyState :: State sym
+emptyState :: State
 emptyState = State S.empty S.empty
 
 
 -- | Remove an item from agenda
-popFromAgenda :: (Monad m) => ST.StateT (State sym) m (Maybe (I.Item sym))
+popFromAgenda :: (Monad m) => ST.StateT State m (Maybe U.Rigit)
 popFromAgenda = do
   st@State{..} <- ST.get
   case S.minView agenda of
@@ -48,21 +49,21 @@ popFromAgenda = do
 
 
 -- | Remove an item from agenda
-addToAgenda :: (Monad m, Ord sym) => I.Item sym -> ST.StateT (State sym) m ()
+addToAgenda :: (Monad m) => U.Rigit -> ST.StateT State m ()
 addToAgenda x = do
   ST.modify' $ \st -> st
     { agenda = S.insert x (agenda st) }
 
 
 -- | Remove an item from agenda
-addToChart :: (Monad m, Ord sym) => I.Item sym -> ST.StateT (State sym) m ()
+addToChart :: (Monad m) => U.Rigit -> ST.StateT State m ()
 addToChart x = do
   ST.modify' $ \st -> st
     { chart = S.insert x (chart st) }
 
 
 -- | Retrieve the chart subsets of the given length
-chartSubsets :: (Monad m) => Int -> ST.StateT (State sym) m [[I.Item sym]]
+chartSubsets :: (Monad m) => Int -> ST.StateT State m [[U.Rigit]]
 chartSubsets k = do
   ch <- ST.gets chart
   return $ subsets k (S.toList ch)
@@ -104,36 +105,42 @@ inject x (x' : xs) =
 
 -- | Perform chart parsing with the given grammar and deduction rules.
 chartParse
-  :: (Show sym, Show var, Show lvar, Ord sym, Ord var, Ord lvar)
-  => P.FunSet sym
-    -- ^ Set of registered functions
-  -> S.Set (I.Item sym)
+  :: (U.IsPatt a)
+  => [a]
     -- ^ Axiom-generated items
-  -> M.Map T.Text (P.Rule sym var lvar)
-    -- ^ Deduction rules (named)
-  -> (I.Item sym -> Bool)
-    -- ^ Is the item final?
-  -> IO (Maybe (I.Item sym))
-chartParse funSet baseItems ruleMap isFinal =
+  -> M.Map T.Text (Ty.Rule a)
+    -- ^ Named deduction rules
+  -> Ty.Pattern a
+    -- ^ Pattern the final item should match
+  -> IO (Maybe a)
+chartParse baseItems tyRuleMap finalPatt =
 
   flip ST.evalStateT emptyState $ do 
-    mapM_ addToAgenda (S.toList baseItems)
+    mapM_ addToAgenda (fmap U.encodeI baseItems)
     processAgenda
 
   where
+
+    -- Untyped rules
+    ruleMap = M.fromList $ do
+      (name, typedRule) <- M.toList tyRuleMap
+      return (name, Ty.compileRule typedRule)
 
     -- Process agenda until empty, or until final item found
     processAgenda = do
       popFromAgenda >>= \case
         Nothing -> return Nothing
-        Just item -> if isFinal item
-          then do
-            addToChart item
-            return $ Just item
-          else do
-            handleItem item
-            addToChart item
-            processAgenda
+        Just item -> do
+          final <- liftIO $ case finalPatt of
+            Ty.Patt p -> U.isMatch p item
+          if final
+             then do
+               addToChart item
+               return . Just $ U.decodeI item
+             else do
+               handleItem item
+               addToChart item
+               processAgenda
 
     -- Try to match the given item with other items already in the chart
     handleItem item = do
@@ -146,7 +153,7 @@ chartParse funSet baseItems ruleMap isFinal =
 --           T.putStr "# Rule: "
 --           T.putStrLn ruleName
         -- For each chart subset
-        subs <- chartSubsets $ length (P.antecedents rule) - 1
+        subs <- chartSubsets $ length (U.antecedents rule) - 1
 --         ST.liftIO $ do
 --           T.putStr "# Subset: "
 --           print subs
@@ -157,9 +164,9 @@ chartParse funSet baseItems ruleMap isFinal =
 --             ST.liftIO $ do
 --               T.putStr "# Matching: "
 --               print items'
-            P.runMatchT funSet $ do
-              result <- P.apply rule items'
-              ST.lift . ST.lift $ addToAgenda result
+            U.runMatchT $ do
+              result <- U.apply rule items'
+              U.lift $ addToAgenda result
               -- We managed to apply a rule!
 --               ST.liftIO $ do
 --                 T.putStr "# "

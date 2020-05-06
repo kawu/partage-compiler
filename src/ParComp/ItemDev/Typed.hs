@@ -21,6 +21,8 @@ module ParComp.ItemDev.Typed
   -- * Non-core patterns
   -- ** Patterns for basic types
   , pair
+  , nothing
+  , just
   , left
   , right
   , nil
@@ -205,8 +207,8 @@ pair x y = build (,) $ add x (add y nix)
 
 
 -- | Match `Nothing` of `Maybe`.
-none :: Op repr => repr (Maybe a)
-none = tag 0 $ build Nothing nix
+nothing :: Op repr => repr (Maybe a)
+nothing = tag 0 $ build Nothing nix
 
 
 -- | Match `Just` of `Maybe`.
