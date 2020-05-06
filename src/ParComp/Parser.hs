@@ -7,7 +7,7 @@
 -- | Parsing with deduction rules and indexing structures
 
 
-module ParComp.ParserDev
+module ParComp.Parser
   ( chartParse
   ) where
 

@@ -35,7 +35,7 @@ import           ParComp.ItemDev.Typed
   ( Pattern(..), Op(..), pair, nothing, just, nil, cons
   , left, right, bimap, guard
   )
-import           ParComp.ParserDev (chartParse)
+import           ParComp.Parser (chartParse)
 
 import           Debug.Trace (trace)
 
