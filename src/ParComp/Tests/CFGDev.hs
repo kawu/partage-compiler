@@ -354,29 +354,28 @@ testMatch = U.runMatchT $ do
 --------------------------------------------------
 
 
--- | Typed deduction rule
-data Rule repr = Rule
-  { antecedents :: [repr Top]
-  , consequent  :: repr Top
-  , sideCond    :: repr Bool
-  }
-
-
--- | Compile the rule to its untyped counterpart.
-compileRule :: Rule Pattern -> U.Rule
-compileRule Rule{..} = U.Rule
-  { U.antecedents = P.map Ty.unPatt antecedents
-  , U.consequent  = Ty.unPatt consequent
-  , U.condition   = Ty.unCond sideCond
-  }
+-- -- | Typed deduction rule
+-- data Rule repr = Rule
+--   { antecedents :: [repr Top]
+--   , consequent  :: repr Top
+--   , sideCond    :: repr Bool
+--   }
+-- 
+-- 
+-- -- | Compile the rule to its untyped counterpart.
+-- compileRule :: Rule Pattern -> U.Rule
+-- compileRule Rule{..} = U.Rule
+--   { U.antecedents = P.map Ty.unPatt antecedents
+--   , U.consequent  = Ty.unPatt consequent
+--   , U.condition   = Ty.unCond sideCond
+--   }
 
 
 -- | CFG complete rule
-complete :: U.Rule
+complete :: Ty.Rule Top
 complete =
 
-  compileRule $
-    Rule [leftP, rightP] downP condP
+  Ty.Rule [leftP, rightP] downP condP
 
   where
 
@@ -422,10 +421,9 @@ complete =
 
 
 -- | CFG predict rule
-predict :: U.Rule
+predict :: Ty.Rule Top
 predict =
-  compileRule $
-    Rule [leftP, rightP] downP condP
+  Ty.Rule [leftP, rightP] downP condP
   where
     leftP = topItem $ active
       (rule any
@@ -451,40 +449,56 @@ predict =
 
 
 -- | Compute the base items for the given sentence and grammar
-cfgBaseItems 
+cfgBaseItems
   :: [T.Text]
     -- ^ Input sentence
   -> S.Set (T.Text, [T.Text])
     -- ^ CFG rules
-  -> S.Set U.Rigit
+  -> [Top]
 cfgBaseItems inp cfgRules =
-  S.fromList $ base1 ++ base2 ++ baseRules
+  base1 ++ base2 ++ baseRules
   where
     n = length inp
     base1 = do
-      -- Note that we use prediction
-      i <- [0]
-      (ruleHead, ruleBody) <- S.toList cfgRules
-      let theRule = mkRule ruleHead ruleBody
-          theSpan = span (pos i) (pos i)
-          theItem = active theRule theSpan
-          theTop  = topItem theItem
-      return . U.strip $ Ty.unPatt theTop
+      (hd, bd) <- S.toList cfgRules
+      return $ Left (mkRule hd bd, (0, 0))
     base2 = do
       (i, term) <- zip [0..n-1] inp
-      let theRule = mkRule term []
-          theSpan = span (pos i) (pos $ i + 1)
-          theItem = active theRule theSpan
-          theTop  = topItem theItem
-      return . U.strip $ Ty.unPatt theTop
+      return $ Left (mkRule term [], (i, i + 1))
     baseRules = do
-      (ruleHead, ruleBody) <- S.toList cfgRules
-      let theRule = mkRule ruleHead ruleBody
-          theTop  = topRule theRule
-      return . U.strip $ Ty.unPatt theTop
-    mkRule hd bd = rule
-      (head hd)
-      (body $ Nothing : P.map Just bd)
+      (hd, bd) <- S.toList cfgRules
+      return $ Right (mkRule hd bd)
+    mkRule hd bd = (hd, Nothing : P.map Just bd)
+
+
+-- cfgBaseItems inp cfgRules =
+--   S.fromList $ base1 ++ base2 ++ baseRules
+--   where
+--     n = length inp
+--     base1 = do
+--       -- Note that we use prediction
+--       i <- [0]
+--       (ruleHead, ruleBody) <- S.toList cfgRules
+--       let theRule = mkRule ruleHead ruleBody
+--           theSpan = span (pos i) (pos i)
+--           theItem = active theRule theSpan
+--           theTop  = topItem theItem
+--       return . U.strip $ Ty.unPatt theTop
+--     base2 = do
+--       (i, term) <- zip [0..n-1] inp
+--       let theRule = mkRule term []
+--           theSpan = span (pos i) (pos $ i + 1)
+--           theItem = active theRule theSpan
+--           theTop  = topItem theItem
+--       return . U.strip $ Ty.unPatt theTop
+--     baseRules = do
+--       (ruleHead, ruleBody) <- S.toList cfgRules
+--       let theRule = mkRule ruleHead ruleBody
+--           theTop  = topRule theRule
+--       return . U.strip $ Ty.unPatt theTop
+--     mkRule hd bd = rule
+--       (head hd)
+--       (body $ Nothing : P.map Just bd)
 
 
 --------------------------------------------------
@@ -523,10 +537,8 @@ testCFGDev = do
         ]
       zero = pos 0
       slen = pos (length sent)
-      finalPatt = Ty.unPatt $
-        topItem $ active any (span zero slen)
-      isFinal = U.isMatch finalPatt
---   forM_ (S.toList baseItems) print
-  chartParse baseItems ruleMap isFinal >>= \case
+      finalPatt = topItem $ active any (span zero slen)
+  -- forM_ baseItems print
+  chartParse baseItems ruleMap finalPatt >>= \case
     Nothing -> putStrLn "# No parse found"
     Just it -> print it

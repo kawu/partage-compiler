@@ -12,6 +12,8 @@ module ParComp.ParserDev
   ) where
 
 
+-- import qualified Prelude as P
+
 import           Control.Monad (forM_, guard, unless)
 import qualified Control.Monad.State.Strict as ST
 import           Control.Monad.State.Strict (lift, liftIO)
@@ -143,21 +145,21 @@ applyDirRule
   -> U.Rigit
   -> U.MatchT (ChartT m) U.Rigit
 applyDirRule ruleName rule mainItem = do
-  liftIO $ do
-    T.putStrLn "@@@ Matching"
-    print $ U.mainAnte rule
-    print mainItem
+--   liftIO $ do
+--     T.putStrLn "@@@ Matching"
+--     print $ U.mainAnte rule
+--     print mainItem
   U.match U.Strict (U.mainAnte rule) mainItem
   case U.otherAntes rule of
     [otherPatt] -> do
       lock <- U.mkLock otherPatt
-      liftIO $ do
-        T.putStr "@@@ Lock: "
-        print lock
+--       liftIO $ do
+--         T.putStr "@@@ Lock: "
+--         print lock
       index <- U.lift $ retrieveIndex lock
-      liftIO $ do
-        T.putStr "@@@ Index: "
-        print index
+--       liftIO $ do
+--         T.putStr "@@@ Index: "
+--         print index
       key <- U.keyFor $ U.lockVars lock
 --       liftIO $ do
 --         T.putStr "@@@ Key: "
@@ -194,14 +196,17 @@ applyDirRule ruleName rule mainItem = do
 
 -- | Perform chart parsing with the given grammar and deduction rules.
 chartParse
-  :: S.Set U.Rigit
+  :: (U.IsPatt a)
+--   :: S.Set U.Rigit
+--     -- ^ Axiom-generated items
+  => [a]
     -- ^ Axiom-generated items
-  -> M.Map T.Text U.Rule
-    -- ^ Deduction rules (named)
-  -> (U.Rigit -> IO Bool)
-    -- ^ Is the item final?
-  -> IO (Maybe U.Rigit)
-chartParse baseItems ruleMap isFinal =
+  -> M.Map T.Text (Ty.Rule a)
+    -- ^ Named deduction rules
+  -> Ty.Pattern a
+    -- ^ Pattern the final item should match
+  -> IO (Maybe a)
+chartParse baseItems ruleMap finalPatt =
 
   flip ST.evalStateT emptyState $ do
 
@@ -218,16 +223,17 @@ chartParse baseItems ruleMap isFinal =
       lift $ registerLock lock
 
     -- Put all base items to agenda
-    mapM_ addToAgenda (S.toList baseItems)
+    mapM_ addToAgenda (fmap U.encodeI baseItems)
 
     -- Process the agenda
     processAgenda
 
   where
 
-    -- Map of directional rules
+    -- Map of untyped directional rules
     dirRuleMap = M.fromList $ do
-      (name, rule) <- M.toList ruleMap
+      (name, typedRule) <- M.toList ruleMap
+      let rule = Ty.compileRule typedRule
       (k, dirRule) <- zip [1..] $ U.directRule rule
       return (name `T.append` T.pack (show k), dirRule)
 
@@ -236,11 +242,14 @@ chartParse baseItems ruleMap isFinal =
       popFromAgenda >>= \case
         Nothing -> return Nothing
         Just item -> do
-          final <- liftIO $ isFinal item
+          final <- liftIO $ case finalPatt of
+            Ty.Patt p -> U.isMatch p item
+            _ -> error "final item pattern invalid" 
+          -- final <- liftIO $ isFinal item
           if final
              then do
                addToChart item
-               return $ Just item
+               return . Just $ U.decodeI item
              else do
                handleItem item
                addToChart item

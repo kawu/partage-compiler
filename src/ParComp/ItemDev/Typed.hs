@@ -28,6 +28,10 @@ module ParComp.ItemDev.Typed
   -- ** Other patterns
   , bimap
   , guard
+
+  -- * Deduction rule
+  , Rule (..)
+  , compileRule
   ) where
 
 
@@ -283,7 +287,6 @@ compileRule Rule{..} = U.Rule
 -- | Verify if the pattern matches with the given value.
 match :: (MonadIO m, IsPatt a) => Pattern a -> a -> m Bool
 match (Patt p) x = U.isMatch p (U.encodeI x)
--- match (FunP f) x = U.isMatch (U.appP f) (U.encodeI x)
 match (FunP _) _ = error "cannot match function"
 match (Cond _) _ = error "cannot match condition"
 match (Vect _) _ = error "cannot match vector (forgot to use `build`?)"
