@@ -196,7 +196,7 @@ applyDirRule ruleName rule mainItem = do
 
 -- | Perform chart parsing with the given grammar and deduction rules.
 chartParse
-  :: (U.IsPatt a)
+  :: (U.IsItem a)
   => [a]
     -- ^ Axiom-generated items
   -> M.Map T.Text (Ty.Rule a)

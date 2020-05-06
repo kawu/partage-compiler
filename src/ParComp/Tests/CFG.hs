@@ -29,7 +29,7 @@ import qualified Data.Set as S
 import           Data.Maybe (fromJust)
 
 import qualified ParComp.Pattern.Untyped as U
-import           ParComp.Pattern.Untyped (Fun(..), Pred(..), IsPatt(..))
+import           ParComp.Pattern.Untyped (Fun(..), Pred(..))
 import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed
   ( Pattern(..), Op(..), pair, nothing, just, nil, cons

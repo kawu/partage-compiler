@@ -49,7 +49,7 @@ import qualified Pipes.Prelude as Pi
 import qualified Data.Text as T
 
 import qualified ParComp.Pattern.Untyped as U
-import           ParComp.Pattern.Untyped (IsPatt)
+import           ParComp.Pattern.Untyped (IsItem)
 
 
 --------------------------------------------------
@@ -84,25 +84,25 @@ class Op (repr :: * -> *) where
 
   any     :: repr a
   var     :: T.Text -> repr a
-  const   :: (IsPatt a) => a -> repr a
+  const   :: (IsItem a) => a -> repr a
 
   and     :: repr a -> repr a -> repr a
   or      :: repr a -> repr a -> repr a
 
-  fun     :: (IsPatt a, IsPatt b) => U.Fun a b -> repr (a -> b)
+  fun     :: (IsItem a, IsItem b) => U.Fun a b -> repr (a -> b)
   app     :: repr (a -> b) -> repr b
   map     :: repr (a -> b) -> repr a -> repr b
   via     :: repr (a -> b) -> repr b -> repr a
   -- expand  :: repr a -> repr (a -> a)
 
-  -- app     :: (IsPatt a) => U.Fun a a -> repr a
-  -- via     :: (IsPatt a, IsPatt b) => U.Fun a b -> repr b -> repr a
+  -- app     :: (IsItem a) => U.Fun a a -> repr a
+  -- via     :: (IsItem a, IsItem b) => U.Fun a b -> repr b -> repr a
 
   with    :: repr a -> repr Bool -> repr a
   eq      :: repr a -> repr a -> repr Bool
   andC    :: repr Bool -> repr Bool -> repr Bool
   orC     :: repr Bool -> repr Bool -> repr Bool
-  check   :: (IsPatt a) => U.Pred a -> repr a -> repr Bool
+  check   :: (IsItem a) => U.Pred a -> repr a -> repr Bool
 
   -- In @letIn x y@:
   -- * @x@ is matched with the underlying item of type @a@
@@ -118,7 +118,7 @@ class Op (repr :: * -> *) where
 
 
 -- NB: The implementation of the individual functions must be consistent with
--- the `IsPatt` class.
+-- the `IsItem` class.
 instance Op Pattern where
 
 --   pair   (Patt x) (Patt y)  = Patt (U.pairP x y)
@@ -178,7 +178,7 @@ instance Op Pattern where
 
 -- | Encode function as a function on untyped items.
 encodeFun
-  :: (IsPatt a, IsPatt b)
+  :: (IsItem a, IsItem b)
   => U.Fun a b
   -> U.Fun U.Rigit U.Rigit
 encodeFun f =
@@ -191,7 +191,7 @@ encodeFun f =
 
 
 -- | Strip the predicate from types.
-encodePred :: (IsPatt a) => U.Pred a -> U.Pred U.Rigit
+encodePred :: (IsItem a) => U.Pred a -> U.Pred U.Rigit
 encodePred p =
   U.Pred {U.pname = U.pname p, U.pbody = pbody'}
   where
@@ -247,13 +247,13 @@ cons x xs = tag 1 . build (:) $ add x (add xs nix)
 
 
 -- | Curry the function and apply it to the given arguments.
-bimap :: (Op repr, IsPatt b, IsPatt c, IsPatt d)
+bimap :: (Op repr, IsItem b, IsItem c, IsItem d)
       => U.Fun (b, c) d -> repr b -> repr c -> repr d
 bimap f x y = map (fun f) (pair x y)
 
 
 -- | Check if the predicates is satisfied on the current item.
-guard :: (Op repr, IsPatt a) => U.Pred a -> repr a
+guard :: (Op repr, IsItem a) => U.Pred a -> repr a
 guard p =
   app $ fun f
   where
@@ -291,7 +291,7 @@ compileRule Rule{..} = U.Rule
 
 
 -- | Verify if the pattern matches with the given value.
-match :: (MonadIO m, IsPatt a) => Pattern a -> a -> m Bool
+match :: (MonadIO m, IsItem a) => Pattern a -> a -> m Bool
 match (Patt p) x = U.isMatch p (U.encodeI x)
 match (FunP _) _ = error "cannot match function"
 match (Cond _) _ = error "cannot match condition"
@@ -303,7 +303,7 @@ match (Vect _) _ = error "cannot match vector (forgot to use `build`?)"
 -- Note: `apply` is not an idiomatic use of the typed interface.  On the other
 -- hand, `MonadIO` constraint is provisional, so the type of this function will
 -- later change and it will most likely become idiomatic...
-apply :: (MonadIO m, IsPatt a, IsPatt b) => Pattern (a -> b) -> a -> m [b]
+apply :: (MonadIO m, IsItem a, IsItem b) => Pattern (a -> b) -> a -> m [b]
 apply patt x = case patt of
   Patt p -> decodeAll $ U.doMatch p (U.encodeI x)
   FunP f -> decodeAll $ U.doMatch (U.appP f) (U.encodeI x)

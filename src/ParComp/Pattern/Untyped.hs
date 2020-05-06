@@ -35,8 +35,8 @@ module ParComp.Pattern.Untyped
 
   , strip
 
-  -- ** IsPatt class
-  , IsPatt (..)
+  -- ** IsItem class
+  , IsItem (..)
   , encodeI
   , decodeI
   , encodeP
@@ -395,7 +395,7 @@ strip = \case
 --------------------------------------------------
 
 
-class IsPatt t where
+class IsItem t where
   -- | Encode a value as an item
   encode :: (Item p -> p) -> t -> p
   -- | Decode a value from an item
@@ -403,33 +403,33 @@ class IsPatt t where
 
 
 -- | Encode a value as a `Rigit`. 
-encodeI :: IsPatt t => t -> Rigit
+encodeI :: IsItem t => t -> Rigit
 encodeI = encode I
 
 
 -- | Decode a value from a `Rigit`.
-decodeI :: IsPatt t => Rigit -> t
+decodeI :: IsItem t => Rigit -> t
 decodeI = decode unI
 
 
 -- | Encode a value as a `Pattern`. 
-encodeP :: IsPatt t => t -> Pattern
+encodeP :: IsItem t => t -> Pattern
 encodeP = encode P
 
 
 -- | Decode a value from a `Pattern`.
-decodeP :: IsPatt t => Pattern -> t
+decodeP :: IsItem t => Pattern -> t
 decodeP = decode $ \case
   P x -> x
   O _ -> error "decodeP: cannot decode O"
 
 
-instance IsPatt () where
+instance IsItem () where
   encode mkP _ = mkP Unit
   decode unP _ = ()
 
 -- TODO: re-implement based on Num?
-instance IsPatt Bool where
+instance IsItem Bool where
   encode mkP = \case
     False -> mkP . Tag 0 $ mkP Unit
     True  -> mkP . Tag 1 $ mkP Unit
@@ -440,7 +440,7 @@ instance IsPatt Bool where
         1 -> True
       _ -> error $ "cannot decode " ++ show x ++ " to Bool"
 
--- instance IsPatt Bool where
+-- instance IsItem Bool where
 --   encode mkP = \case
 --     False -> mkP . Union . Left  $ mkP Unit
 --     True  -> mkP . Union . Right $ mkP Unit
@@ -452,32 +452,32 @@ instance IsPatt Bool where
 --       _ -> error $ "cannot decode " ++ show x ++ " to Bool"
 
 -- TODO: re-implement based on Num?
-instance IsPatt Int where
+instance IsItem Int where
   encode mkP = mkP . Sym . T.pack . show
   decode unP p = case unP p of
     Sym x -> read (T.unpack x)
     _ -> error $ "cannot decode " ++ show p ++ " to Int"
 
-instance IsPatt T.Text where
+instance IsItem T.Text where
   encode mkP = mkP . Sym
   decode unP p = case unP p of
     Sym x -> x
     _ -> error $ "cannot decode " ++ show p ++ " to Text"
 
-instance (IsPatt a, IsPatt b) => IsPatt (a, b) where
+instance (IsItem a, IsItem b) => IsItem (a, b) where
   encode mkP (x, y) = mkP . Vec $
     A.fromListN 2 [encode mkP x, encode mkP y]
   decode unP p = case unP p of
     Vec v -> (decode unP (A.indexArray v 0), decode unP (A.indexArray v 1))
     _ -> error $ "cannot decode " ++ show p ++ " to (,)"
 
--- instance (IsPatt a, IsPatt b) => IsPatt (a, b) where
+-- instance (IsItem a, IsItem b) => IsItem (a, b) where
 --   encode mkP (x, y) = mkP $ Pair (encode mkP x) (encode mkP y)
 --   decode unP p = case unP p of
 --     Pair x y -> (decode unP x, decode unP y)
 --     _ -> error $ "cannot decode " ++ show p ++ " to (,)"
 
-instance (IsPatt a, IsPatt b, IsPatt c) => IsPatt (a, b, c) where
+instance (IsItem a, IsItem b, IsItem c) => IsItem (a, b, c) where
   encode mkP (x, y, z) = mkP . Vec $
     A.fromListN 3 [encode mkP x, encode mkP y, encode mkP z]
   decode unP p = case unP p of
@@ -488,7 +488,7 @@ instance (IsPatt a, IsPatt b, IsPatt c) => IsPatt (a, b, c) where
       )
     _ -> error $ "cannot decode " ++ show p ++ " to (,,)"
 
--- instance (IsPatt a, IsPatt b, IsPatt c) => IsPatt (a, b, c) where
+-- instance (IsItem a, IsItem b, IsItem c) => IsItem (a, b, c) where
 --   encode mkP (x, y, z) =
 --     mkP $ Pair (encode mkP x) (mkP $ Pair (encode mkP y) (encode mkP z))
 --   decode unP p = case unP p of
@@ -496,7 +496,7 @@ instance (IsPatt a, IsPatt b, IsPatt c) => IsPatt (a, b, c) where
 --       Pair y z -> (decode unP x, decode unP y, decode unP z)
 --     _ -> error $ "cannot decode " ++ show p ++ " to (,,)"
 
-instance (IsPatt a) => IsPatt (Maybe a) where
+instance (IsItem a) => IsItem (Maybe a) where
   encode mkP = \case
     Nothing -> mkP . Tag 0 $ mkP Unit
     Just x  -> mkP . Tag 1 $ encode mkP x
@@ -506,7 +506,7 @@ instance (IsPatt a) => IsPatt (Maybe a) where
       1 -> Just (decode unP x)
     _ -> error $ "cannot decode " ++ show p ++ " to Maybe"
 
--- instance (IsPatt a) => IsPatt (Maybe a) where
+-- instance (IsItem a) => IsItem (Maybe a) where
 --   encode mkP = \case
 --     Nothing -> mkP . Union . Left  $ mkP Unit
 --     Just x  -> mkP . Union . Right $ encode mkP x
@@ -516,7 +516,7 @@ instance (IsPatt a) => IsPatt (Maybe a) where
 --       Right x -> Just (decode unP x)
 --     _ -> error $ "cannot decode " ++ show p ++ " to Maybe"
 
-instance (IsPatt a, IsPatt b) => IsPatt (Either a b) where
+instance (IsItem a, IsItem b) => IsItem (Either a b) where
   encode mkP = \case
     Left x  -> mkP . Tag 0 $ encode mkP x
     Right y -> mkP . Tag 1 $ encode mkP y
@@ -526,7 +526,7 @@ instance (IsPatt a, IsPatt b) => IsPatt (Either a b) where
       1 -> Right $ decode unP x
     _ -> error $ "cannot decode " ++ show p ++ " to Either"
 
--- instance (IsPatt a, IsPatt b) => IsPatt (Either a b) where
+-- instance (IsItem a, IsItem b) => IsItem (Either a b) where
 --   encode mkP = \case
 --     Left x  -> mkP . Union . Left  $ encode mkP x
 --     Right y -> mkP . Union . Right $ encode mkP y
@@ -536,7 +536,7 @@ instance (IsPatt a, IsPatt b) => IsPatt (Either a b) where
 --       Right y -> Right $ decode unP y
 --     _ -> error $ "cannot decode " ++ show p ++ " to Either"
 
-instance (IsPatt a) => IsPatt [a] where
+instance (IsItem a) => IsItem [a] where
   encode mkP = \case
     []      -> mkP . Tag 0 $ mkP Unit
     x : xs  -> mkP . Tag 1 $ mkP . Vec $
@@ -549,7 +549,7 @@ instance (IsPatt a) => IsPatt [a] where
          in x : xs
     _ -> error $ "cannot decode " ++ show p ++ " to []"
 
--- instance (IsPatt a) => IsPatt [a] where
+-- instance (IsItem a) => IsItem [a] where
 --   encode mkP = \case
 --     []      -> mkP . Union . Left  $ mkP Unit
 --     x : xs  -> mkP . Union . Right $
