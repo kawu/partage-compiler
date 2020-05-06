@@ -98,6 +98,8 @@ module ParComp.ItemDev.Untyped
   ) where
 
 
+import           Prelude hiding (const, map, any)
+
 import qualified System.Random as R
 
 import           Control.Monad (guard, void, forM)
@@ -913,7 +915,8 @@ isMatch p x =
 
 -- | Perform pattern matching and generate the list of possible global variable
 -- binding environments which satisfy the match.
-doMatch :: (P.MonadIO m) => Pattern -> Rigit -> P.ListT m (Env Var)
+-- doMatch :: (P.MonadIO m) => Pattern -> Rigit -> P.ListT m (Env Var)
+doMatch :: (P.MonadIO m) => Pattern -> Rigit -> P.ListT m Rigit
 doMatch p x = do
   P.Select $
     _doMatch p x P.yield
@@ -924,13 +927,15 @@ _doMatch
   :: (P.MonadIO m)
   => Pattern
   -> Rigit
-  -> (Env Var -> m ()) -- ^ Monadic handler
+  -- -> (Env Var -> m ()) -- ^ Monadic handler
+  -> (Rigit -> m ()) -- ^ Monadic handler
   -> m ()
 _doMatch p x h =
   runMatchT $ do
-    _ <- match Strict p x
-    e <- RWS.gets $ getL genv
-    lift $ h e
+    x <- match Strict p x
+    lift $ h x
+    -- e <- RWS.gets $ getL genv
+    -- lift $ h e
 
 
 --------------------------------------------------

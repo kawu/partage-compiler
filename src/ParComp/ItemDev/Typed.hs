@@ -1,4 +1,6 @@
+{-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE RecordWildCards #-}
 
 -- {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -12,24 +14,41 @@ module ParComp.ItemDev.Typed
   ( Pattern (..)
   , Op (..)
 
-  -- * Utils
+  -- * Matching
+  , match
+  , apply
+
+  -- * Non-core patterns
+  -- ** Patterns for basic types
   , pair
   , left
   , right
   , nil
   , cons
+  -- ** Other patterns
   , bimap
   , guard
   ) where
 
 
-import           Prelude hiding (map, any)
+import           Prelude hiding (const, map, any)
+
+import qualified Prelude as P
 import qualified Control.Monad as P
+import           Control.Monad.IO.Class (MonadIO)
+
+import qualified Pipes as Pi
+import qualified Pipes.Prelude as Pi
 
 import qualified Data.Text as T
 
 import qualified ParComp.ItemDev.Untyped as U
 import           ParComp.ItemDev.Untyped (IsPatt)
+
+
+--------------------------------------------------
+-- Pattern
+--------------------------------------------------
 
 
 -- | Typed representation of a pattern.
@@ -172,7 +191,7 @@ encodePred p =
 
 
 --------------------------------------------------
--- Utils
+-- Patterns for standard types
 --------------------------------------------------
 
 
@@ -212,6 +231,11 @@ cons :: Op repr => repr a -> repr [a] -> repr [a]
 cons x xs = tag 1 . build (:) $ add x (add xs nix)
 
 
+--------------------------------------------------
+-- Other patterns
+--------------------------------------------------
+
+
 -- | Curry the function and apply it to the given arguments.
 bimap :: (Op repr, IsPatt b, IsPatt c, IsPatt d)
       => U.Fun (b, c) d -> repr b -> repr c -> repr d
@@ -227,3 +251,57 @@ guard p =
     body x = do
       P.guard (U.pbody p x)
       return x
+
+
+--------------------------------------------------
+-- Typed rule
+--------------------------------------------------
+
+
+-- | Typed deduction rule for items of type @a@.
+data Rule a = Rule
+  { antecedents :: [Pattern a]
+  , consequent  :: Pattern a
+  , condition   :: Pattern Bool
+  }
+
+
+-- | Compile the rule to its untyped counterpart.
+compileRule :: Rule a -> U.Rule
+compileRule Rule{..} = U.Rule
+  { U.antecedents = P.map unPatt antecedents
+  , U.consequent  = unPatt consequent
+  , U.condition   = unCond condition
+  }
+
+
+--------------------------------------------------
+-- Typed matching
+--------------------------------------------------
+
+
+-- | Verify if the pattern matches with the given value.
+match :: (MonadIO m, IsPatt a) => Pattern a -> a -> m Bool
+match (Patt p) x = U.isMatch p (U.encodeI x)
+-- match (FunP f) x = U.isMatch (U.appP f) (U.encodeI x)
+match (FunP _) _ = error "cannot match function"
+match (Cond _) _ = error "cannot match condition"
+match (Vect _) _ = error "cannot match vector (forgot to use `build`?)"
+
+
+-- | Apply functional pattern to a value.
+--
+-- Note: `apply` is not an idiomatic use of the typed interface.  On the other
+-- hand, `MonadIO` constraint is provisional, so the type of this function will
+-- later change and it will most likely become idiomatic...
+apply :: (MonadIO m, IsPatt a, IsPatt b) => Pattern (a -> b) -> a -> m [b]
+apply patt x = case patt of
+  Patt p -> decodeAll $ U.doMatch p (U.encodeI x)
+  FunP f -> decodeAll $ U.doMatch (U.appP f) (U.encodeI x)
+  Cond _ -> error "cannot apply condition"
+  Vect _ -> error "cannot apply vector (forgot to use `build`?)"
+  where
+    decodeAll
+      = fmap (P.map U.decodeI)
+      . Pi.toListM
+      . Pi.enumerate
