@@ -38,8 +38,10 @@ module ParComp.Pattern.Typed
 
 
 import           Prelude hiding (const, map, any)
-
 import qualified Prelude as P
+
+import           System.IO.Unsafe (unsafePerformIO)
+
 import qualified Control.Monad as P
 import           Control.Monad.IO.Class (MonadIO)
 
@@ -291,8 +293,10 @@ compileRule Rule{..} = U.Rule
 
 
 -- | Verify if the pattern matches with the given value.
-match :: (MonadIO m, IsItem a) => Pattern a -> a -> m Bool
-match (Patt p) x = U.isMatch p (U.encodeI x)
+--
+-- Warning: the function provisionally relies on `unsafePerformIO`.
+match :: (IsItem a) => Pattern a -> a -> Bool
+match (Patt p) x = unsafePerformIO $ U.isMatch p (U.encodeI x)
 match (FunP _) _ = error "cannot match function"
 match (Cond _) _ = error "cannot match condition"
 match (Vect _) _ = error "cannot match vector (forgot to use `build`?)"
@@ -300,11 +304,9 @@ match (Vect _) _ = error "cannot match vector (forgot to use `build`?)"
 
 -- | Apply functional pattern to a value.
 --
--- Note: `apply` is not an idiomatic use of the typed interface.  On the other
--- hand, `MonadIO` constraint is provisional, so the type of this function will
--- later change and it will most likely become idiomatic...
-apply :: (MonadIO m, IsItem a, IsItem b) => Pattern (a -> b) -> a -> m [b]
-apply patt x = case patt of
+-- Warning: the function provisionally relies on `unsafePerformIO`.
+apply :: (IsItem a, IsItem b) => Pattern (a -> b) -> a -> [b]
+apply patt x = unsafePerformIO $ case patt of
   Patt p -> decodeAll $ U.doMatch p (U.encodeI x)
   FunP f -> decodeAll $ U.doMatch (U.appP f) (U.encodeI x)
   Cond _ -> error "cannot apply condition"
