@@ -100,6 +100,8 @@ class Op (repr :: * -> *) where
 
   with    :: repr a -> repr Bool -> repr a
   eq      :: repr a -> repr a -> repr Bool
+  andC    :: repr Bool -> repr Bool -> repr Bool
+  orC     :: repr Bool -> repr Bool -> repr Bool
   check   :: (IsPatt a) => U.Pred a -> repr a -> repr Bool
 
   -- In @letIn x y@:
@@ -163,6 +165,8 @@ instance Op Pattern where
 
   with (Patt x) (Cond c)    = Patt (U.withP x c)
   eq (Patt x) (Patt y)      = Cond (U.Eq x y)
+  orC  (Cond x) (Cond y)    = Cond (U.OrC x y)
+  andC (Cond x) (Cond y)    = Cond (U.And x y)
   check p (Patt x)          = Cond (U.Check (encodePred p) x)
 
   letIn (Patt x) (Patt y)   = Patt (U.letP x U.anyP y)

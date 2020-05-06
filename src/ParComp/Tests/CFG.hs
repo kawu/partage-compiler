@@ -67,17 +67,14 @@ type DotRule = (Head, Body)
 type Active = (DotRule, Span)
 
 -- | Top-level item
-type Top = Either Active DotRule
+type Item = Either Active DotRule
 
 
-topItem :: Op repr => repr Active -> repr Top
-topItem = left
+item :: Op repr => repr DotRule -> repr Span -> repr Item
+item r s = left $ pair r s
 
-topRule :: Op repr => repr DotRule -> repr Top
-topRule = right
-
-active :: Op repr => repr DotRule -> repr Span -> repr Active
-active = pair
+top :: Op repr => repr DotRule -> repr Item
+top = right
 
 rule :: Op repr => repr Head -> repr Body -> repr DotRule
 rule = pair
@@ -335,14 +332,14 @@ testMatch = U.runMatchT $ do
 
 
 -- | CFG complete rule
-complete :: Ty.Rule Top
+complete :: Ty.Rule Item
 complete =
 
   Ty.Rule [leftP, rightP] downP condP
 
   where
 
-    leftP = topItem $ active
+    leftP = item
       (rule v_A
         (via (fun splitAtDot)
         -- (via (splitAt dot)
@@ -351,10 +348,10 @@ complete =
       )
       (span v_i v_j)
 
-    rightP = topItem $ active
+    rightP = item
       (rule v_C
         (guard endsWithDotP)
-        -- (suffix $ const dot .: nil)
+        -- (suffix $ dot .: nil)
       )
       (span v_j v_k)
 
@@ -362,7 +359,7 @@ complete =
       (map (fun label) v_B)
       (map (fun label) v_C)
 
-    downP = topItem $ active
+    downP = item
       (rule v_A
         -- (append'
         (bimap append
@@ -384,21 +381,21 @@ complete =
 
 
 -- | CFG predict rule
-predict :: Ty.Rule Top
+predict :: Ty.Rule Item
 predict =
   Ty.Rule [leftP, rightP] downP condP
   where
-    leftP = topItem $ active
+    leftP = item
       (rule any
         (suffix $ dot .: just (var "B") .: any)
       )
       (span (var "i") (var "j"))
-    rightP = topRule $
+    rightP = top $
       rule (var "C") (var "alpha")
     condP = eq
       (map (fun label) (var "B"))
       (map (fun label) (var "C"))
-    downP = topItem $ active
+    downP = item
       (rule (var "C") (var "alpha"))
       (span (var "j") (var "j"))
 
@@ -414,7 +411,7 @@ cfgBaseItems
     -- ^ Input sentence
   -> S.Set (T.Text, [T.Text])
     -- ^ CFG rules
-  -> [Top]
+  -> [Item]
 cfgBaseItems inp cfgRules =
   base1 ++ base2 ++ baseRules
   where
@@ -467,7 +464,7 @@ testCFG = do
         ]
       zero = pos 0
       slen = pos (length sent)
-      finalPatt = topItem $ active any (span zero slen)
+      finalPatt = item any (span zero slen)
   -- forM_ baseItems print
   chartParse baseItems ruleMap finalPatt >>= \case
     Nothing -> putStrLn "# No parse found"
