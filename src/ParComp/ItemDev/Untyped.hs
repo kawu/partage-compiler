@@ -7,8 +7,9 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE DerivingStrategies #-}
 
-{-# LANGUAGE QuantifiedConstraints #-}
+-- {-# LANGUAGE QuantifiedConstraints #-}
 
 
 module ParComp.ItemDev.Untyped
@@ -112,7 +113,7 @@ import qualified Data.Primitive.Array as A
 
 import           Data.Void (Void)
 import           Data.String (IsString)
--- import qualified Data.Foldable as F
+import qualified Data.Foldable as F
 import qualified Data.Text as T
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -148,9 +149,17 @@ data Item expr where
   deriving (Show, Eq, Ord)
 
 
+-- instance (Show expr) => Show (Item expr) where
+--   show Unit = "()"
+--   show (Sym x) = "\"" ++ T.unpack x ++ "\""
+--   show (Vec v) = show (F.toList v)
+--   show (Tag k x) = show k ++ ":" ++ show x
+
+
 -- | Rigid item expression
 newtype Rigit = I (Item Rigit)
-  deriving (Show, Eq, Ord)
+  deriving (Eq, Ord)
+  deriving newtype (Show)
 
 
 -- | Extract the rigit item.
@@ -320,6 +329,10 @@ data Pattern
   | O (Op Pattern)
   -- ^ Operation pattern
   deriving (Show, Eq, Ord)
+
+-- instance Show Pattern where
+--   show (P x) = show x
+--   show (O x) = show x
 
 
 -- | Pattern constructors

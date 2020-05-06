@@ -526,10 +526,6 @@ testCFGDev = do
       finalPatt = Ty.unPatt $
         topItem $ active any (span zero slen)
       isFinal = U.isMatch finalPatt
---       isFinal = \case
---         U.I (U.Union (Left (U.I (U.Pair _ (U.I (U.Pair i j))))))
---           | i == zero && j == slen -> True
---         _ -> False
 --   forM_ (S.toList baseItems) print
   chartParse baseItems ruleMap isFinal >>= \case
     Nothing -> putStrLn "# No parse found"

@@ -143,21 +143,21 @@ applyDirRule
   -> U.Rigit
   -> U.MatchT (ChartT m) U.Rigit
 applyDirRule ruleName rule mainItem = do
---   liftIO $ do
---     T.putStrLn "@@@ Matching"
---     print $ U.mainAnte rule
---     print mainItem
+  liftIO $ do
+    T.putStrLn "@@@ Matching"
+    print $ U.mainAnte rule
+    print mainItem
   U.match U.Strict (U.mainAnte rule) mainItem
   case U.otherAntes rule of
     [otherPatt] -> do
       lock <- U.mkLock otherPatt
---       liftIO $ do
---         T.putStr "@@@ Lock: "
---         print lock
+      liftIO $ do
+        T.putStr "@@@ Lock: "
+        print lock
       index <- U.lift $ retrieveIndex lock
---       liftIO $ do
---         T.putStr "@@@ Index: "
---         print index
+      liftIO $ do
+        T.putStr "@@@ Index: "
+        print index
       key <- U.keyFor $ U.lockVars lock
 --       liftIO $ do
 --         T.putStr "@@@ Key: "
