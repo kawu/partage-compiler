@@ -29,9 +29,9 @@ import qualified Data.Text.IO as T
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 
-import qualified ParComp.ItemDev.Untyped as U
-import qualified ParComp.ItemDev.Typed as Ty
-import           ParComp.ItemDev.Typed (Pattern(..), Op(..))
+import qualified ParComp.Pattern.Untyped as U
+import qualified ParComp.Pattern.Typed as Ty
+import           ParComp.Pattern.Typed (Pattern(..), Op(..))
 
 
 --------------------------------------------------

@@ -12,7 +12,7 @@
 -- {-# LANGUAGE QuantifiedConstraints #-}
 
 
-module ParComp.ItemDev.Untyped
+module ParComp.Pattern.Untyped
   (
 
   -- * Core types

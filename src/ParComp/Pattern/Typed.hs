@@ -10,7 +10,7 @@
 -- http://okmij.org/ftp/tagless-final/).
 
 
-module ParComp.ItemDev.Typed
+module ParComp.Pattern.Typed
   ( Pattern (..)
   , Op (..)
 
@@ -48,8 +48,8 @@ import qualified Pipes.Prelude as Pi
 
 import qualified Data.Text as T
 
-import qualified ParComp.ItemDev.Untyped as U
-import           ParComp.ItemDev.Untyped (IsPatt)
+import qualified ParComp.Pattern.Untyped as U
+import           ParComp.Pattern.Untyped (IsPatt)
 
 
 --------------------------------------------------

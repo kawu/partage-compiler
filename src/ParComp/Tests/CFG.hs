@@ -28,10 +28,10 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import           Data.Maybe (fromJust)
 
-import qualified ParComp.ItemDev.Untyped as U
-import           ParComp.ItemDev.Untyped (Fun(..), Pred(..), IsPatt(..))
-import qualified ParComp.ItemDev.Typed as Ty
-import           ParComp.ItemDev.Typed
+import qualified ParComp.Pattern.Untyped as U
+import           ParComp.Pattern.Untyped (Fun(..), Pred(..), IsPatt(..))
+import qualified ParComp.Pattern.Typed as Ty
+import           ParComp.Pattern.Typed
   ( Pattern(..), Op(..), pair, nothing, just, nil, cons
   , left, right, bimap, guard
   )
