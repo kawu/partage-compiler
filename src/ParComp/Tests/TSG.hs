@@ -27,7 +27,7 @@ import qualified ParComp.Pattern.Untyped as U
 import           ParComp.Pattern.Untyped (Fun(..), Pred(..))
 import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed
-  ( Pattern(..), Op(..), pair, nothing, just, nil, cons
+  ( Pattern, Patt(..), pair, nothing, just, nil, cons
   , left, right, bimap, guard
   )
 import           ParComp.Parser (chartParse)
@@ -65,26 +65,26 @@ type Active = (DotRule, Span)
 type Item = Either Active DotRule
 
 
-item :: Op repr => repr DotRule -> repr Span -> repr Item
+item :: Pattern DotRule -> Pattern Span -> Pattern Item
 item r s = left $ pair r s
 
-top :: Op repr => repr DotRule -> repr Item
+top :: Pattern DotRule -> Pattern Item
 top = right
 
-rule :: Op repr => repr Head -> repr Body -> repr DotRule
+rule :: Pattern Head -> Pattern Body -> Pattern DotRule
 rule = pair
 
-span :: Op repr => repr Int -> repr Int -> repr Span
+span :: Pattern Int -> Pattern Int -> Pattern Span
 span = pair
 
-pos :: Op repr => Int -> repr Int
+pos :: Int -> Pattern Int
 pos = const
 
-head :: Op repr => Node -> repr Head
+head :: Node -> Pattern Head
 head = const
 
 -- | Dot in a dotted rule
-dot :: Op repr => repr (Maybe Node)
+dot :: Pattern (Maybe Node)
 dot = nothing
 
 
@@ -93,8 +93,8 @@ dot = nothing
 --------------------------------------------------
 
 
--- | Operator synonym to `cons`
-(.:) :: (Op repr) => repr a -> repr [a] -> repr [a]
+-- | Synonym to `cons`
+(.:) :: Pattern a -> Pattern [a] -> Pattern [a]
 (.:) = cons
 infixr 5 .:
 
@@ -106,7 +106,7 @@ append = Fun "append" $ \(xs, ys) -> do
 
 
 -- | Split at dot.
-splitAtDot :: (Op repr) => repr (Body -> (Body, Body))
+splitAtDot :: Pattern (Body -> (Body, Body))
 splitAtDot = fun $ _splitAt "splitAtDot" Nothing
 
 
@@ -186,7 +186,7 @@ data Grammar = Grammar
 --------------------------------------------------
 
 -- | Node label
-label :: (Op repr) => repr (Node -> Sym)
+label :: Pattern (Node -> Sym)
 label = fun $ Fun "label" nodeLabel
 
 
@@ -199,17 +199,17 @@ nodeLabel x = case T.splitOn "_" x of
 
 
 -- | Leaf node predicate
-leaf :: (Op repr) => Grammar -> repr Node -> repr Bool
+leaf :: Grammar -> Pattern Node -> Pattern Bool
 leaf gram = check $ Pred "leaf" $ \x -> x `S.member` leafs gram
 
 
 -- | Root node predicate
-root :: (Op repr) => Grammar -> repr Node -> repr Bool
+root :: Grammar -> Pattern Node -> Pattern Bool
 root gram = check $ Pred "root" $ \x -> x `S.member` roots gram
 
 
 -- | Internal node predicate
-internal :: (Op repr) => Grammar -> repr Node -> repr Bool
+internal :: Grammar -> Pattern Node -> Pattern Bool
 internal gram = check $ Pred "internal" $ \x -> x `S.member` inter gram
 
 

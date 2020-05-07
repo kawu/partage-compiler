@@ -12,7 +12,7 @@
 
 module ParComp.Pattern.Typed
   ( Pattern (..)
-  , Op (..)
+  , Patt (..)
 
   -- * Matching
   , match
@@ -69,8 +69,8 @@ data Pattern a
   deriving (Show, Eq, Ord)
 
 
--- | Tagless-final encoding of operations supported by patterns.
-class Op (repr :: * -> *) where
+-- | Tagless-final encoding of typed patterns.
+class Patt (repr :: * -> *) where
 
   -- Data structure building patterns
   nix     :: repr (a, a)
@@ -109,7 +109,7 @@ class Op (repr :: * -> *) where
 
 -- NB: The implementation of the individual functions must be consistent with
 -- the `IsItem` class.
-instance Op Pattern where
+instance Patt Pattern where
 
   nix                       = Vect []
   add  (Patt x) (Vect xs)   = Vect (x:xs)
@@ -190,38 +190,38 @@ encodePred p =
 
 
 -- | Match a pair of patterns.
-pair :: Op repr => repr a -> repr b -> repr (a, b)
+pair :: Patt repr => repr a -> repr b -> repr (a, b)
 pair x y = build (,) $ add x (add y nix)
 
 
 -- | Match `Nothing` of `Maybe`.
-nothing :: Op repr => repr (Maybe a)
+nothing :: Patt repr => repr (Maybe a)
 nothing = tag 0 $ build Nothing nix
 
 
 -- | Match `Just` of `Maybe`.
-just :: Op repr => repr a -> repr (Maybe a)
+just :: Patt repr => repr a -> repr (Maybe a)
 just x = tag 1 . build Just $ add x nix
 
 
 -- | Match `Left` of `Either`.
-left :: Op repr => repr a -> repr (Either a b)
+left :: Patt repr => repr a -> repr (Either a b)
 left x = tag 0 . build Left $ add x nix
 
 
 -- | Match `Right` of `Either`.
-right :: Op repr => repr b -> repr (Either a b)
+right :: Patt repr => repr b -> repr (Either a b)
 right x = tag 1 . build Right $ add x nix
 
 
 -- | Match empty list.
-nil :: Op repr => repr [a]
+nil :: Patt repr => repr [a]
 nil = tag 0 $ build [] nix
 -- nil = tag 0 unit
 
 
 -- | Match non-empty list.
-cons :: Op repr => repr a -> repr [a] -> repr [a]
+cons :: Patt repr => repr a -> repr [a] -> repr [a]
 cons x xs = tag 1 . build (:) $ add x (add xs nix)
 
 
@@ -231,13 +231,13 @@ cons x xs = tag 1 . build (:) $ add x (add xs nix)
 
 
 -- | Curry the function and apply it to the given arguments.
-bimap :: (Op repr, IsItem b, IsItem c, IsItem d)
+bimap :: (Patt repr, IsItem b, IsItem c, IsItem d)
       => U.Fun (b, c) d -> repr b -> repr c -> repr d
 bimap f x y = map (fun f) (pair x y)
 
 
 -- | Check if the predicates is satisfied on the current item.
-guard :: (Op repr, IsItem a) => U.Pred a -> repr a
+guard :: (Patt repr, IsItem a) => U.Pred a -> repr a
 guard p =
   app $ fun f
   where

@@ -32,7 +32,7 @@ import qualified ParComp.Pattern.Untyped as U
 import           ParComp.Pattern.Untyped (Fun(..), Pred(..))
 import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed
-  ( Pattern(..), Op(..), pair, nothing, just, nil, cons
+  ( Pattern(..), Patt(..), pair, nothing, just, nil, cons
   , left, right, bimap, guard
   )
 import           ParComp.Parser (chartParse)
@@ -70,26 +70,26 @@ type Active = (DotRule, Span)
 type Item = Either Active DotRule
 
 
-item :: Op repr => repr DotRule -> repr Span -> repr Item
+item :: Patt repr => repr DotRule -> repr Span -> repr Item
 item r s = left $ pair r s
 
-top :: Op repr => repr DotRule -> repr Item
+top :: Patt repr => repr DotRule -> repr Item
 top = right
 
-rule :: Op repr => repr Head -> repr Body -> repr DotRule
+rule :: Patt repr => repr Head -> repr Body -> repr DotRule
 rule = pair
 
-span :: Op repr => repr Int -> repr Int -> repr Span
+span :: Patt repr => repr Int -> repr Int -> repr Span
 span = pair
 
-pos :: Op repr => Int -> repr Int
+pos :: Patt repr => Int -> repr Int
 pos = const
 
-head :: Op repr => Node -> repr Head
+head :: Patt repr => Node -> repr Head
 head = const
 
 -- | Dot in a dotted rule
-dot :: Op repr => repr (Maybe Node)
+dot :: Patt repr => repr (Maybe Node)
 dot = nothing
 
 
@@ -190,25 +190,25 @@ nodeLabel x = case T.splitOn "_" x of
 
 
 -- | Operator synonym to `cons`
-(.:) :: (Op repr) => repr a -> repr [a] -> repr [a]
+(.:) :: (Patt repr) => repr a -> repr [a] -> repr [a]
 (.:) = cons
 infixr 5 .:
 
 
 -- -- | Operator synonym to `pair`
--- (.+) :: (Op repr) => repr a -> repr b -> repr (a, b)
+-- (.+) :: (Patt repr) => repr a -> repr b -> repr (a, b)
 -- (.+) = pair
 -- infixr 5 .+
 
 
 -- | Match any suffix that satisfies the given suffix pattern.
-suffix :: (Op repr) => repr [a] -> repr [a]
+suffix :: (Patt repr) => repr [a] -> repr [a]
 suffix p = fix $ or p (any .: rec)
 
 
 -- -- | Remove suffix starting with the given element.
 -- removeSuffixCont
---   :: forall repr a. (Op repr)
+--   :: forall repr a. (Patt repr)
 --   => repr a       -- ^ First element of the suffix
 --   -> repr [a]     -- ^ Suffix matching continuation
 --   -> repr [a]     -- ^ The entire list
@@ -221,7 +221,7 @@ suffix p = fix $ or p (any .: rec)
 
 
 -- -- | Remove suffix starting with the given element.
--- removeSuffix :: forall repr a. (Op repr) => repr a -> repr ([a] -> [a])
+-- removeSuffix :: forall repr a. (Patt repr) => repr a -> repr ([a] -> [a])
 -- removeSuffix p =
 --   fix $ p1 `or` (p2 `or` p3)
 --   where
@@ -235,7 +235,7 @@ suffix p = fix $ or p (any .: rec)
 -- * @ys = removeSuffix p xs@
 -- * @zs = suffix p xs@
 --
-splitAt :: forall repr a. (Op repr) => repr a -> repr ([a] -> ([a], [a]))
+splitAt :: forall repr a. (Patt repr) => repr a -> repr ([a] -> ([a], [a]))
 splitAt p =
   fix $ p1 `or` p2
   where
@@ -256,7 +256,7 @@ splitAt p =
 
 
 -- | Append the first list at the end of the second list.
-appendEnd :: forall repr a. (Op repr) => repr [a] -> repr ([a] -> [a])
+appendEnd :: forall repr a. (Patt repr) => repr [a] -> repr ([a] -> [a])
 appendEnd ys =
   fix $ p1 `or` p2
   where
@@ -267,7 +267,7 @@ appendEnd ys =
 
 
 -- | Append two lists.
-append' :: forall repr a. (Op repr) => repr [a] -> repr [a] -> repr [a]
+append' :: forall repr a. (Patt repr) => repr [a] -> repr [a] -> repr [a]
 append' xs ys = map (appendEnd ys) xs
 
 

@@ -13,7 +13,7 @@ import           Data.Ord
 
 import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed
-  (Op (..), pair)
+  (Patt (..), pair)
 import qualified ParComp.Pattern.Util as U
 
 

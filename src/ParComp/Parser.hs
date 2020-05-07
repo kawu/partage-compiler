@@ -31,7 +31,7 @@ import qualified Data.Set as S
 
 import qualified ParComp.Pattern.Untyped as U
 import qualified ParComp.Pattern.Typed as Ty
-import           ParComp.Pattern.Typed (Pattern(..), Op(..))
+import           ParComp.Pattern.Typed (Pattern(..), Patt(..))
 
 
 --------------------------------------------------
