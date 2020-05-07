@@ -317,17 +317,17 @@ data Op t
 -- items.
 data Cond t
   = Eq t t
---   -- ^ Check the equality between two patterns
+  -- ^ Check the equality between two patterns
 --   | Check (Pred Rigit) t
-  -- ^ Check if the given predicate is satisfied
+--   -- ^ Check if the given predicate is satisfied
   | And (Cond t) (Cond t)
   -- ^ Logical conjunction
   | OrC (Cond t) (Cond t)
   -- ^ Logical disjunction
 --   | TrueC
 --   -- ^ Always True
-  | TrueP t
-  -- ^ Boolean pattern condition
+  | IsTrue t
+  -- ^ Check if the given Boolean (predicate) pattern is satisfied
   deriving (Show, Eq, Ord)
 
 
@@ -429,6 +429,10 @@ decodeP :: IsItem t => Pattern -> t
 decodeP = decode $ \case
   P x -> x
   O _ -> error "decodeP: cannot decode O"
+
+
+-- IMPORTANT NOTE: The implemented instances below must correspond with the
+-- patterns provided in the Typed interface module.
 
 
 instance IsItem () where
@@ -1142,7 +1146,7 @@ check Strict = \case
   And cx cy -> check Strict cx  >> check Strict cy
   OrC cx cy -> check Strict cx <|> check Strict cy
 --   TrueC -> pure ()
-  TrueP p -> do
+  IsTrue p -> do
     x <- close p
     guard $ x == true I
 check Lazy = \case
@@ -1177,7 +1181,7 @@ check Lazy = \case
   -- result doesn't make sense.
   -- Neg c -> not <$> check Lazy c
 --   TrueC -> pure ()
-  TrueP px -> do
+  IsTrue px -> do
     cx <- closeable px
     case cx of
       True -> do
@@ -1354,7 +1358,7 @@ closeableC = \case
   -- OrC cx cy -> (&&) <$> closeableC cx <*> closeableC cy
   -- Neg c -> closeableC c
 --   TrueC -> pure True
-  TrueP p -> closeable p
+  IsTrue p -> closeable p
 
 
 --------------------------------------------------
@@ -1512,7 +1516,7 @@ getLockVarsC = \case
   OrC c1 c2 -> getLockVarsC c1 <|> getLockVarsC c2
   -- Neg c -> getLockVarsC c
 --   TrueC -> pure S.empty
-  TrueP p ->
+  IsTrue p ->
     closeable p >>= \case
       True  -> pure $ S.singleton p
       False -> pure S.empty

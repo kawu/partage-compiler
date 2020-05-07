@@ -215,7 +215,7 @@ leaf :: Grammar -> Pattern Node -> Pattern Cond
 -- leaf gram = check $ Pred "leaf" $ \x -> x `S.member` leafs gram
 leaf gram =
   let namedFun = Fun "leaf" $ \x -> pure (x `S.member` leafs gram)
-   in cond . map (fun namedFun)
+   in isTrue . map (fun namedFun)
 
 
 -- | Root node predicate
@@ -223,7 +223,7 @@ root :: Grammar -> Pattern Node -> Pattern Cond
 -- root gram = check $ Pred "root" $ \x -> x `S.member` roots gram
 root gram =
   let namedFun = Fun "root" $ \x -> pure (x `S.member` roots gram)
-   in cond . map (fun namedFun)
+   in isTrue . map (fun namedFun)
 
 
 -- | Internal node predicate
@@ -231,7 +231,7 @@ internal :: Grammar -> Pattern Node -> Pattern Cond
 -- internal gram = check $ Pred "internal" $ \x -> x `S.member` inter gram
 internal gram =
   let namedFun = Fun "internal" $ \x -> pure (x `S.member` inter gram)
-   in cond . map (fun namedFun)
+   in isTrue . map (fun namedFun)
 
 
 --------------------------------------------------

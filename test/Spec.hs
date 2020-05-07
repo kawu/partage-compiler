@@ -13,7 +13,9 @@ import           Data.Ord
 
 import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed
-  (Patt (..), pair)
+  ( Patt (..), match
+  , pair, unit, false, true, nil, cons, left, right, nothing, just
+  )
 import qualified ParComp.Pattern.Util as U
 
 
@@ -64,25 +66,61 @@ patternUnitTests = testGroup "(patterns)"
       let f = letIn any (const ())
           p = via f any `and` pair (const 1) (const 2)
           x = (1 :: Int, 2 :: Int)
-      Ty.match p x @?= True
+      match p x @?= True
 
   -- Check if we can interpret Boolean functions as conditions
   , testCase "const True" $ do
-      Ty.match (any `with` cond (const True)) () @?= True
+      match (any `with` isTrue (const True)) () @?= True
   , testCase "const False" $ do
-      Ty.match (any `with` cond (const False)) () @?= False
+      match (any `with` isTrue (const False)) () @?= False
   , testCase "const False `andC` const True" $ do
-      let c = cond (const False) `andC` cond (const True)
-      Ty.match (any `with` c) () @?= False
+      let c = isTrue (const False) `andC` isTrue (const True)
+      match (any `with` c) () @?= False
   , testCase "const False `orC` const True" $ do
-      let c = cond (const False) `orC` cond (const True)
-      Ty.match (any `with` c) () @?= True
+      let c = isTrue (const False) `orC` isTrue (const True)
+      match (any `with` c) () @?= True
 
 --   -- Check if we can interpret conditions as Boolean functions
---   -- (this does not type check, and should not type check)
+--   -- (this does not type check, and it shoudn't)
 --   , testCase "condition -> Boolean function" $ do
 --       let p = const (1 :: Int) `eq` const 2
---       Ty.match p True @?= True
+--       match p True @?= True
+
+  -- Check if IsItem instances correspond with patterns for several basic types
+  , testCase "match unit ()" $ do
+      match unit () @?= True
+
+  , testCase "match false False" $ do
+      match false False @?= True
+  , testCase "match true True" $ do
+      match true True @?= True
+  , testCase "match false True" $ do
+      match false True @?= False
+  , testCase "match true False" $ do
+      match true False @?= False
+
+  , testCase "match nil []" $ do
+      match nil ([] :: [()]) @?= True
+  , testCase "match (1 `cons` nil) [1]" $ do
+      match (const (1 :: Int) `cons` nil) [1::Int] @?= True
+  , testCase "match (1 `cons` nil) []" $ do
+      match (const (1 :: Int) `cons` nil) [] @?= False
+
+  , testCase "match nothing Nothing" $ do
+      match nothing (Nothing :: Maybe Int) @?= True
+  , testCase "match (just 1) (Just 1)" $ do
+      match (just $ const 1) (Just 1 :: Maybe Int) @?= True
+  , testCase "match nothing (Just 1)" $ do
+      match nothing (Just 1 :: Maybe Int) @?= False
+  , testCase "match (just 1) Nothing" $ do
+      match (just $ const 1) (Nothing :: Maybe Int) @?= False
+
+  , testCase "match (left 1) (Left 1)" $ do
+      match (left $ const 1) (Left 1 :: Either Int ()) @?= True
+  , testCase "match (left 1) (Right ())" $ do
+      match (left $ const 1) (Right () :: Either Int ()) @?= False
+  , testCase "match (right unit) (Left 1)" $ do
+      match (right unit) (Left 1 :: Either Int ()) @?= False
   ]
 
 
@@ -90,6 +128,7 @@ otherUnitTests = testGroup "(other)"
   [ testCase "List comparison (different length)" $
       [1, 2, 3] `compare` [1,2] @?= GT
   ]
+
 
 ---------------------------------------------------------------------
 -- Utils

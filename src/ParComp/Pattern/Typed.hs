@@ -21,7 +21,10 @@ module ParComp.Pattern.Typed
 
   -- * Non-core patterns
   -- ** Patterns for basic types
+  , unit
   , pair
+  , false
+  , true
   , nothing
   , just
   , left
@@ -124,7 +127,7 @@ class Patt (repr :: * -> *) where
   with    :: repr a -> repr Cond -> repr a
 
   -- | Cast a predicate pattern as a condition
-  cond    :: repr Bool -> repr Cond
+  isTrue  :: repr Bool -> repr Cond
   eq      :: repr a -> repr a -> repr Cond
   andC    :: repr Cond -> repr Cond -> repr Cond
   orC     :: repr Cond -> repr Cond -> repr Cond
@@ -181,7 +184,7 @@ instance Patt Pattern where
 --   app (Patt f)              = Patt f
 --   -- expand (Patt f)           = Patt f
 
-  cond (Patt x)             = Cond (U.TrueP x)
+  isTrue (Patt x)           = Cond (U.IsTrue x)
   with (Patt x) (Cond y)    = Patt (U.withP x y)
   eq (Patt x) (Patt y)      = Cond (U.Eq x y)
   andC (Cond x) (Cond y)    = Cond (U.And x y)
@@ -225,9 +228,24 @@ encodeFun f =
 --------------------------------------------------
 
 
+-- | Match `()` of `().
+unit :: Patt repr => repr ()
+unit = build () nix
+
+
 -- | Match a pair of patterns.
 pair :: Patt repr => repr a -> repr b -> repr (a, b)
 pair x y = build (,) $ add x (add y nix)
+
+
+-- | Match `False` of `Bool`.
+false :: Patt repr => repr Bool
+false = tag 0 $ build False nix
+
+
+-- | Match `True` of `Bool`.
+true :: Patt repr => repr Bool
+true = tag 1 $ build True nix
 
 
 -- | Match `Nothing` of `Maybe`.
@@ -253,7 +271,6 @@ right x = tag 1 . build Right $ add x nix
 -- | Match empty list.
 nil :: Patt repr => repr [a]
 nil = tag 0 $ build [] nix
--- nil = tag 0 unit
 
 
 -- | Match non-empty list.
