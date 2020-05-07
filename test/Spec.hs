@@ -52,16 +52,11 @@ qcProps = testGroup "(checked by QuickCheck)"
 --         (n :: Integer) >= 3 QC.==> x^n + y^n /= (z^n :: Integer)
   ]
 
+unitTests = testGroup "Unit tests" [patternUnitTests, otherUnitTests]
 
-unitTests = testGroup "Unit tests"
-  [ testCase "List comparison (different length)" $
-      [1, 2, 3] `compare` [1,2] @?= GT
 
---   -- the following test does not hold
---   , testCase "List comparison (same length)" $
---       [1, 2, 3] `compare` [1,2,2] @?= LT
-
-  , testCase "Util.append" $ do
+patternUnitTests = testGroup "(patterns)"
+  [ testCase "Util.append" $ do
       Ty.apply U.append ([1, 2], [3]) @?= [[1, 2, 3 :: Int]]
 
   -- Check if we can still match the original item after applying via
@@ -71,12 +66,30 @@ unitTests = testGroup "Unit tests"
           x = (1 :: Int, 2 :: Int)
       Ty.match p x @?= True
 
-  -- Check if we can interpret Boolean functions as predicates
-  , testCase "with any (const True)" $ do
-      let p = with any (const True)
-      Ty.match p () @?= True
+  -- Check if we can interpret Boolean functions as conditions
+  , testCase "const True" $ do
+      Ty.match (any `with` cond (const True)) () @?= True
+  , testCase "const False" $ do
+      Ty.match (any `with` cond (const False)) () @?= False
+  , testCase "const False `andC` const True" $ do
+      let c = cond (const False) `andC` cond (const True)
+      Ty.match (any `with` c) () @?= False
+  , testCase "const False `orC` const True" $ do
+      let c = cond (const False) `orC` cond (const True)
+      Ty.match (any `with` c) () @?= True
+
+--   -- Check if we can interpret conditions as Boolean functions
+--   -- (this does not type check, and should not type check)
+--   , testCase "condition -> Boolean function" $ do
+--       let p = const (1 :: Int) `eq` const 2
+--       Ty.match p True @?= True
   ]
 
+
+otherUnitTests = testGroup "(other)"
+  [ testCase "List comparison (different length)" $
+      [1, 2, 3] `compare` [1,2] @?= GT
+  ]
 
 ---------------------------------------------------------------------
 -- Utils

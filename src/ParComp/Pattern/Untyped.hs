@@ -193,6 +193,11 @@ tag k = I . Tag k
 -- num = I . Num
 
 
+-- Special constructors for Booleans, since we treat them special (predicates)
+false mkP = mkP . Tag 0 $ mkP Unit
+true  mkP = mkP . Tag 1 $ mkP Unit
+
+
 --------------------------------------------------
 -- Functions and predicates
 --------------------------------------------------
@@ -321,6 +326,8 @@ data Cond t
   -- ^ Logical disjunction
   | TrueC
   -- ^ Always True
+  | TrueP t
+  -- ^ Boolean pattern condition
   deriving (Show, Eq, Ord)
 
 
@@ -431,8 +438,9 @@ instance IsItem () where
 -- TODO: re-implement based on Num?
 instance IsItem Bool where
   encode mkP = \case
-    False -> mkP . Tag 0 $ mkP Unit
-    True  -> mkP . Tag 1 $ mkP Unit
+    -- NB: we alsu use `true` below in `check`
+    False -> false mkP  -- mkP . Tag 0 $ mkP Unit
+    True  -> true mkP   -- mkP . Tag 1 $ mkP Unit
   decode unP x =
     case unP x of
       Tag k _ -> case k of
@@ -1134,6 +1142,9 @@ check Strict = \case
   And cx cy -> check Strict cx  >> check Strict cy
   OrC cx cy -> check Strict cx <|> check Strict cy
   TrueC -> pure ()
+  TrueP p -> do
+    x <- close p
+    guard $ x == true I
 check Lazy = \case
   Eq px py -> do
     cx <- closeable px
@@ -1160,12 +1171,20 @@ check Lazy = \case
   -- NB: Below, `alt` is necessary since `check` can modify the state in case
   -- of lazy evaluation
   OrC cx cy -> check Lazy cx `alt` check Lazy cy
-  -- NB: The line below (commented out) is probably incorrect. In case of
-  -- Lazy matching, some embedded check may succeed simply because we cannot
+  -- NB: The line below (commented out) is probably incorrect. In case of Lazy
+  -- matching, some embedded check may succeed simply because we cannot
   -- determine its status yet (see (*) above).  Hence, negating the embedded
   -- result doesn't make sense.
   -- Neg c -> not <$> check Lazy c
   TrueC -> pure ()
+  TrueP px -> do
+    cx <- closeable px
+    case cx of
+      True -> do
+        x <- close px
+        guard $ x == true I
+      False -> do
+        bindPatt px (true I)
 
 
 -- | Dummy pattern matching
@@ -1335,6 +1354,7 @@ closeableC = \case
   -- OrC cx cy -> (&&) <$> closeableC cx <*> closeableC cy
   -- Neg c -> closeableC c
   TrueC -> pure True
+  TrueP p -> closeable p
 
 
 --------------------------------------------------
@@ -1492,6 +1512,10 @@ getLockVarsC = \case
   OrC c1 c2 -> getLockVarsC c1 <|> getLockVarsC c2
   -- Neg c -> getLockVarsC c
   TrueC -> pure S.empty
+  TrueP p ->
+    closeable p >>= \case
+      True  -> pure $ S.singleton p
+      False -> pure S.empty
 
 
 -- | Retrieve the lock of the pattern.  The lock can be used to determine the

@@ -27,7 +27,8 @@ import qualified ParComp.Pattern.Untyped as U
 import           ParComp.Pattern.Untyped (Fun(..), Pred(..))
 import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed
-  ( Pattern, Patt(..), pair, nothing, just, nil, cons
+  ( Pattern, Patt(..), Cond,
+  pair, nothing, just, nil, cons
   , left, right, bimap, guard
   )
 import           ParComp.Parser (chartParse)
@@ -199,17 +200,17 @@ nodeLabel x = case T.splitOn "_" x of
 
 
 -- | Leaf node predicate
-leaf :: Grammar -> Pattern Node -> Pattern Bool
+leaf :: Grammar -> Pattern Node -> Pattern Cond
 leaf gram = check $ Pred "leaf" $ \x -> x `S.member` leafs gram
 
 
 -- | Root node predicate
-root :: Grammar -> Pattern Node -> Pattern Bool
+root :: Grammar -> Pattern Node -> Pattern Cond
 root gram = check $ Pred "root" $ \x -> x `S.member` roots gram
 
 
 -- | Internal node predicate
-internal :: Grammar -> Pattern Node -> Pattern Bool
+internal :: Grammar -> Pattern Node -> Pattern Cond
 internal gram = check $ Pred "internal" $ \x -> x `S.member` inter gram
 
 

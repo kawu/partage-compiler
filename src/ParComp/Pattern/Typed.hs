@@ -13,6 +13,7 @@
 module ParComp.Pattern.Typed
   ( Pattern (..)
   , Patt (..)
+  , Cond
 
   -- * Matching
   , match
@@ -69,39 +70,71 @@ data Pattern a
   deriving (Show, Eq, Ord)
 
 
+-- -- | Cast a pattern as a condition.
+-- asCond :: Pattern a -> U.Cond U.Pattern
+-- asCond c = case c of
+--   Patt x -> U.TrueP x
+--   Cond x -> x
+
+
+-- | Condition marker
+data Cond
+
+
 -- | Tagless-final encoding of typed patterns.
 class Patt (repr :: * -> *) where
 
+  ------------------------------------------
   -- Data structure building patterns
+  ------------------------------------------
+
   nix     :: repr (a, a)
   add     :: repr a -> repr (b, c) -> repr (a -> b, c)
   build   :: a -> repr (a, b) -> repr b
   tag     :: Int -> repr a -> repr a
 
+  ------------------------------------------
   -- Core matching patterns
+  ------------------------------------------
+
   any     :: repr a
   var     :: T.Text -> repr a
   const   :: (IsItem a) => a -> repr a
 
+  ------------------------------------------
   -- Logical patterns
+  ------------------------------------------
+
   and     :: repr a -> repr a -> repr a
   or      :: repr a -> repr a -> repr a
 
+  ------------------------------------------
   -- Functional patterns
+  ------------------------------------------
+
   fun     :: (IsItem a, IsItem b) => U.Fun a b -> repr (a -> b)
   app     :: repr (a -> b) -> repr b
   map     :: repr (a -> b) -> repr a -> repr b
   via     :: repr (a -> b) -> repr b -> repr a
 
+  ------------------------------------------
   -- Condition patterns
-  with    :: repr a -> repr Bool -> repr a
-  eq      :: repr a -> repr a -> repr Bool
-  andC    :: repr Bool -> repr Bool -> repr Bool
-  orC     :: repr Bool -> repr Bool -> repr Bool
-  true    :: repr Bool
-  check   :: (IsItem a) => U.Pred a -> repr a -> repr Bool
+  ------------------------------------------
 
+  with    :: repr a -> repr Cond -> repr a
+
+  -- | Cast a predicate pattern as a condition
+  cond    :: repr Bool -> repr Cond
+  eq      :: repr a -> repr a -> repr Cond
+  andC    :: repr Cond -> repr Cond -> repr Cond
+  orC     :: repr Cond -> repr Cond -> repr Cond
+  true    :: repr Cond
+  check   :: (IsItem a) => U.Pred a -> repr a -> repr Cond
+
+  ------------------------------------------
   -- Defining functions
+  ------------------------------------------
+ 
   letIn   :: repr a -> repr b -> repr (a -> b)
   local   :: T.Text -> repr a
   fix     :: repr a -> repr a
@@ -148,11 +181,12 @@ instance Patt Pattern where
 --   app (Patt f)              = Patt f
 --   -- expand (Patt f)           = Patt f
 
-  with (Patt x) (Cond c)    = Patt (U.withP x c)
+  cond (Patt x)             = Cond (U.TrueP x)
+  with (Patt x) (Cond y)    = Patt (U.withP x y)
   eq (Patt x) (Patt y)      = Cond (U.Eq x y)
+  andC (Cond x) (Cond y)    = Cond (U.And x y)
   orC  (Cond x) (Cond y)    = Cond (U.OrC x y)
   true                      = Cond U.TrueC
-  andC (Cond x) (Cond y)    = Cond (U.And x y)
   check p (Patt x)          = Cond (U.Check (encodePred p) x)
 
   letIn (Patt x) (Patt y)   = Patt (U.letP x U.anyP y)
@@ -258,7 +292,7 @@ guard p =
 data Rule a = Rule
   { antecedents :: [Pattern a]
   , consequent  :: Pattern a
-  , condition   :: Pattern Bool
+  , condition   :: Pattern Cond
   }
 
 
