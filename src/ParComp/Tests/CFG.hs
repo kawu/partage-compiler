@@ -316,8 +316,8 @@ testX = [0, 1, 2]
 
 testMatch :: IO ()
 testMatch = U.runMatchT $ do
-  let f  = unPatt testSplitAt1
-  -- let f  = unPatt (app . fun $ _splitAt "splitAt 1" (1 :: Int))
+  -- let f  = unPatt testSplitAt1
+  let f  = unPatt (app . fun $ _splitAt "splitAt 1" (1 :: Int))
       xs = U.encodeI testX
   it <- U.match U.Strict f xs
   U.lift $ do

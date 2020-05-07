@@ -1055,27 +1055,24 @@ match ms (O op) it =
     (App f, it) -> do
       -- f <- retrieveFun fname
       each $ fbody f it
+    -- NOTE: This could be alternatively called "Choice" operator (from
+    -- "non-deterministic choice operator")
     (Or p1 p2, it) -> do
-      -- NOTE: we retrieve and then restore the entire state, even though the
+      -- NOTE: We retrieve and then restore the entire state, even though the
       -- fixed recursive pattern should never escape its syntactic scope so, in
       -- theory, it should not change between the first and the second branch
       -- of the `Or` pattern.  The same applies to local variables.  Perhaps
       -- this is something we could check dynamically, just in case?
       match ms p1 it `alt` match ms p2 it
     (Via p x, it) -> do
+      -- NOTE: We return `it` at the end rather than the result of either of
+      -- the two matches.  This matches nicely with how the types of the @via@
+      -- pattern in the typed interface are defined.  A natural alternative
+      -- would be to return the result of the second match -- we could provide
+      -- this behavior with another operator if needed.
       it' <- match ms p it
---       P.liftIO $ do
---         putStrLn "!!! Matching Via #1"
---         putStr "p: " >> print p
---         putStr "x: " >> print x
---         putStr "it: " >> print it
---         putStr "it': " >> print it'
-      z <- match ms x it'
---       P.liftIO $ do
---         putStrLn "!!! Matching Via #2"
---         putStr "z: " >> print z
---         putStrLn "!!! Matching Via END #3"
-      return z
+      match ms x it'
+      return it
     (With p c, it) -> do
       match ms p it
       check ms c

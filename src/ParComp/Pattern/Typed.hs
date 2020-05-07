@@ -72,62 +72,44 @@ data Pattern a
 -- | Tagless-final encoding of operations supported by patterns.
 class Op (repr :: * -> *) where
 
---   pair    :: repr a -> repr b -> repr (a, b)
---   cons    :: repr a -> repr [a] -> repr [a]
---   nil     :: repr [a]
-
---   -- TODO: Do we really need this?  Besides, the type is not very nice...
---   unit    :: repr a
-
+  -- Data structure building patterns
   nix     :: repr (a, a)
   add     :: repr a -> repr (b, c) -> repr (a -> b, c)
   build   :: a -> repr (a, b) -> repr b
   tag     :: Int -> repr a -> repr a
 
+  -- Core matching patterns
   any     :: repr a
   var     :: T.Text -> repr a
   const   :: (IsItem a) => a -> repr a
 
+  -- Logical patterns
   and     :: repr a -> repr a -> repr a
   or      :: repr a -> repr a -> repr a
 
+  -- Functional patterns
   fun     :: (IsItem a, IsItem b) => U.Fun a b -> repr (a -> b)
   app     :: repr (a -> b) -> repr b
   map     :: repr (a -> b) -> repr a -> repr b
   via     :: repr (a -> b) -> repr b -> repr a
-  -- expand  :: repr a -> repr (a -> a)
 
-  -- app     :: (IsItem a) => U.Fun a a -> repr a
-  -- via     :: (IsItem a, IsItem b) => U.Fun a b -> repr b -> repr a
-
+  -- Condition patterns
   with    :: repr a -> repr Bool -> repr a
   eq      :: repr a -> repr a -> repr Bool
   andC    :: repr Bool -> repr Bool -> repr Bool
   orC     :: repr Bool -> repr Bool -> repr Bool
   check   :: (IsItem a) => U.Pred a -> repr a -> repr Bool
 
-  -- In @letIn x y@:
-  -- * @x@ is matched with the underlying item of type @a@
-  -- * @y@ is constructed to provide new type @b@
-  -- The expression thus has the type @a -> b@.
+  -- Defining functions
   letIn   :: repr a -> repr b -> repr (a -> b)
   local   :: T.Text -> repr a
   fix     :: repr a -> repr a
   rec     :: repr a
 
---   letIn'  :: repr a -> repr a -> repr b -> repr b -> repr a
---   fix'    :: (repr a -> repr b) -> repr a -> repr b
-
 
 -- NB: The implementation of the individual functions must be consistent with
 -- the `IsItem` class.
 instance Op Pattern where
-
---   pair   (Patt x) (Patt y)  = Patt (U.pairP x y)
---   cons   (Patt x) (Patt y)  = Patt (U.rightP $ U.pairP x y)
---   nil                       = Patt (U.leftP U.unitP)
-
---   unit                      = Patt U.unitP
 
   nix                       = Vect []
   add  (Patt x) (Vect xs)   = Vect (x:xs)
@@ -294,7 +276,7 @@ compileRule Rule{..} = U.Rule
 
 -- | Verify if the pattern matches with the given value.
 --
--- Warning: the function provisionally relies on `unsafePerformIO`.
+-- Warning: the function (provisionally) relies on `unsafePerformIO`.
 match :: (IsItem a) => Pattern a -> a -> Bool
 match (Patt p) x = unsafePerformIO $ U.isMatch p (U.encodeI x)
 match (FunP _) _ = error "cannot match function"
@@ -304,7 +286,7 @@ match (Vect _) _ = error "cannot match vector (forgot to use `build`?)"
 
 -- | Apply functional pattern to a value.
 --
--- Warning: the function provisionally relies on `unsafePerformIO`.
+-- Warning: the function (provisionally) relies on `unsafePerformIO`.
 apply :: (IsItem a, IsItem b) => Pattern (a -> b) -> a -> [b]
 apply patt x = unsafePerformIO $ case patt of
   Patt p -> decodeAll $ U.doMatch p (U.encodeI x)
