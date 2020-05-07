@@ -129,7 +129,7 @@ class Patt (repr :: * -> *) where
   andC    :: repr Cond -> repr Cond -> repr Cond
   orC     :: repr Cond -> repr Cond -> repr Cond
   true    :: repr Cond
-  check   :: (IsItem a) => U.Pred a -> repr a -> repr Cond
+  -- check   :: (IsItem a) => U.Pred a -> repr a -> repr Cond
 
   ------------------------------------------
   -- Defining functions
@@ -187,7 +187,7 @@ instance Patt Pattern where
   andC (Cond x) (Cond y)    = Cond (U.And x y)
   orC  (Cond x) (Cond y)    = Cond (U.OrC x y)
   true                      = Cond U.TrueC
-  check p (Patt x)          = Cond (U.Check (encodePred p) x)
+  -- check p (Patt x)          = Cond (U.Check (encodePred p) x)
 
   letIn (Patt x) (Patt y)   = Patt (U.letP x U.anyP y)
 
@@ -210,14 +210,14 @@ encodeFun f =
       return $ U.encodeI x2
 
 
--- | Strip the predicate from types.
-encodePred :: (IsItem a) => U.Pred a -> U.Pred U.Rigit
-encodePred p =
-  U.Pred {U.pname = U.pname p, U.pbody = pbody'}
-  where
-    pbody' x0 =
-      let x1 = U.decodeI x0
-       in U.pbody p x1
+-- -- | Strip the predicate from types.
+-- encodePred :: (IsItem a) => U.Pred a -> U.Pred U.Rigit
+-- encodePred p =
+--   U.Pred {U.pname = U.pname p, U.pbody = pbody'}
+--   where
+--     pbody' x0 =
+--       let x1 = U.decodeI x0
+--        in U.pbody p x1
 
 
 --------------------------------------------------
@@ -272,14 +272,25 @@ bimap :: (Patt repr, IsItem b, IsItem c, IsItem d)
 bimap f x y = map (fun f) (pair x y)
 
 
--- | Check if the predicates is satisfied on the current item.
-guard :: (Patt repr, IsItem a) => U.Pred a -> repr a
+-- -- | Check if the predicate is satisfied on the current item.
+-- guard :: (Patt repr, IsItem a) => U.Pred a -> repr a
+-- guard p =
+--   app $ fun f
+--   where
+--     f = U.Fun {U.fname = U.pname p, U.fbody = body}
+--     body x = do
+--       P.guard (U.pbody p x)
+--       return x
+
+
+-- | Check if the predicate is satisfied on the current item.
+guard :: (Patt repr, IsItem a) => U.Fun a Bool -> repr a
 guard p =
   app $ fun f
   where
-    f = U.Fun {U.fname = U.pname p, U.fbody = body}
+    f = U.Fun {U.fname = U.fname p, U.fbody = body}
     body x = do
-      P.guard (U.pbody p x)
+      P.guard =<< U.fbody p x
       return x
 
 

@@ -29,7 +29,7 @@ import qualified Data.Set as S
 import           Data.Maybe (fromJust)
 
 import qualified ParComp.Pattern.Untyped as U
-import           ParComp.Pattern.Untyped (Fun(..), Pred(..))
+import           ParComp.Pattern.Untyped (Fun(..))
 import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed
   ( Pattern(..), Patt(..), pair, nothing, just, nil, cons
@@ -133,26 +133,37 @@ _splitAt txt y =
     go [] = ([], [])
 
 
+-- -- | Check if the list ends with dot.  If so, return it as is.
+-- endsWith :: (Eq a) => T.Text -> a -> Fun [a] [a]
+-- endsWith txt y = Fun txt $ \xs -> do
+--   P.guard $ lastMaybe xs == Just y
+--   return xs
+--
+--
+-- -- | Make sure that the body of the dotted rule ends with the dot.
+-- endsWithDot :: Fun Body Body
+-- endsWithDot = endsWith "endsWithDot" Nothing
+
+
+-- -- | Check if the list ends with dot.  If so, return it as is.
+-- endsWithP :: (Eq a) => T.Text -> a -> Pred [a]
+-- endsWithP txt y = Pred txt $ \xs ->
+--   lastMaybe xs == Just y
+--
+--
+-- -- | Does the body of the dotted rule ends with the dot?
+-- endsWithDotP :: Pred Body
+-- endsWithDotP = endsWithP "endsWithDotP" Nothing
+
+
 -- | Check if the list ends with dot.  If so, return it as is.
-endsWith :: (Eq a) => T.Text -> a -> Fun [a] [a]
-endsWith txt y = Fun txt $ \xs -> do
-  P.guard $ lastMaybe xs == Just y
-  return xs
-
-
--- | Make sure that the body of the dotted rule ends with the dot.
-endsWithDot :: Fun Body Body
-endsWithDot = endsWith "endsWithDot" Nothing
-
-
--- | Check if the list ends with dot.  If so, return it as is.
-endsWithP :: (Eq a) => T.Text -> a -> Pred [a]
-endsWithP txt y = Pred txt $ \xs ->
-  lastMaybe xs == Just y
+endsWithP :: (Eq a) => T.Text -> a -> Fun [a] Bool
+endsWithP txt y = Fun txt $ \xs -> do
+  return (lastMaybe xs == Just y)
 
 
 -- | Does the body of the dotted rule ends with the dot?
-endsWithDotP :: Pred Body
+endsWithDotP :: Fun Body Bool
 endsWithDotP = endsWithP "endsWithDotP" Nothing
 
 

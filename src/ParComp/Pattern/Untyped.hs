@@ -17,7 +17,7 @@ module ParComp.Pattern.Untyped
 
   -- * Core types
     Fun (..)
-  , Pred (..)
+--   , Pred (..)
   , Var (..)
   , LVar (..)
 
@@ -223,26 +223,26 @@ instance Ord (Fun a b) where
   x `compare` y = fname x `compare` fname y
 
 
--- | Named predicate
---
--- We require that all function and predicate names are unique.  (See the
--- `guard` function in the `Typed` module to understand why a predicate should
--- not have the same name as a function).
-data Pred a = Pred
-  { pname :: T.Text
-    -- ^ The predicate's name
-  , pbody :: a -> Bool
-    -- ^ The predicate itself
-  }
-
-instance Show (Pred a) where
-  show Pred{..} = T.unpack pname
-
-instance Eq (Pred a) where
-  x == y = pname x == pname y
-
-instance Ord (Pred a) where
-  x `compare` y = pname x `compare` pname y
+-- -- | Named predicate
+-- --
+-- -- We require that all function and predicate names are unique.  (See the
+-- -- `guard` function in the `Typed` module to understand why a predicate should
+-- -- not have the same name as a function).
+-- data Pred a = Pred
+--   { pname :: T.Text
+--     -- ^ The predicate's name
+--   , pbody :: a -> Bool
+--     -- ^ The predicate itself
+--   }
+-- 
+-- instance Show (Pred a) where
+--   show Pred{..} = T.unpack pname
+-- 
+-- instance Eq (Pred a) where
+--   x == y = pname x == pname y
+-- 
+-- instance Ord (Pred a) where
+--   x `compare` y = pname x `compare` pname y
 
 
 --------------------------------------------------
@@ -317,8 +317,8 @@ data Op t
 -- items.
 data Cond t
   = Eq t t
-  -- ^ Check the equality between two patterns
-  | Check (Pred Rigit) t
+--   -- ^ Check the equality between two patterns
+--   | Check (Pred Rigit) t
   -- ^ Check if the given predicate is satisfied
   | And (Cond t) (Cond t)
   -- ^ Logical conjunction
@@ -1133,12 +1133,12 @@ check Strict = \case
     x <- close px
     y <- close py
     guard $ x == y
---   Pred pname p -> do
---     flag <- retrievePred pname <*> close p
+-- --   Pred pname p -> do
+-- --     flag <- retrievePred pname <*> close p
+-- --     guard flag
+--   Check pred p -> do
+--     flag <- pbody pred <$> close p
 --     guard flag
-  Check pred p -> do
-    flag <- pbody pred <$> close p
-    guard flag
   And cx cy -> check Strict cx  >> check Strict cy
   OrC cx cy -> check Strict cx <|> check Strict cy
   TrueC -> pure ()
@@ -1157,16 +1157,16 @@ check Lazy = \case
       (True, False) -> bindPatt py =<< close px
       (False, True) -> bindPatt px =<< close py
       (False, False) -> error "check Lazy: both patterns not closeable"
-  Check pred p -> do
-    -- pred <- retrievePred pname
-    closeable p >>= \case
-      True  -> do
-        flag <- pbody pred <$> close p
-        guard flag
-      False -> do
-        -- NB: We bind the pattern (see also `getLockVarsC`) with the unit
-        -- value to indicate that the value of the condition is True.
-        bindPatt (withP unitP (Check pred p)) unit
+--   Check pred p -> do
+--     -- pred <- retrievePred pname
+--     closeable p >>= \case
+--       True  -> do
+--         flag <- pbody pred <$> close p
+--         guard flag
+--       False -> do
+--         -- NB: We bind the pattern (see also `getLockVarsC`) with the unit
+--         -- value to indicate that the value of the condition is True.
+--         bindPatt (withP unitP (Check pred p)) unit
   And cx cy -> check Lazy cx >> check Lazy cy
   -- NB: Below, `alt` is necessary since `check` can modify the state in case
   -- of lazy evaluation
@@ -1347,7 +1347,7 @@ closeable (O op) = case op of
 closeableC :: (P.MonadIO m) => Cond Pattern -> MatchT m Bool
 closeableC = \case
   Eq px py -> (&&) <$> closeable py <*> closeable py
-  Check _ p -> closeable p
+--   Check _ p -> closeable p
   And cx cy -> (&&) <$> closeableC cx <*> closeableC cy
   -- TODO: what about the case below?
   OrC cx cy -> undefined
@@ -1501,12 +1501,12 @@ getLockVarsC = \case
       (True, False) -> pure $ S.singleton px
       (False, True) -> pure $ S.singleton py
       _ -> pure S.empty
-  Check pred p ->
-    closeable p >>= \case
-      -- NB: Below, we cast the predicate to a `With` pattern.  This is because
-      -- currently the lock only supports patterns, and not conditions.
-      True -> pure $ S.singleton (withP unitP (Check pred p))
-      False -> pure S.empty
+--   Check pred p ->
+--     closeable p >>= \case
+--       -- NB: Below, we cast the predicate to a `With` pattern.  This is because
+--       -- currently the lock only supports patterns, and not conditions.
+--       True -> pure $ S.singleton (withP unitP (Check pred p))
+--       False -> pure S.empty
   And c1 c2 -> (<>) <$> getLockVarsC c1 <*> getLockVarsC c2
   -- NB: `alt` is not necessary since `getLockVar` doesn't modify the state
   OrC c1 c2 -> getLockVarsC c1 <|> getLockVarsC c2

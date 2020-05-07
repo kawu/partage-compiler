@@ -18,7 +18,7 @@ module ParComp.Pattern.Util
 
 
 import qualified ParComp.Pattern.Untyped as U
-import           ParComp.Pattern.Untyped (IsItem(..), Fun(..), Pred(..))
+import           ParComp.Pattern.Untyped (IsItem(..), Fun(..))
 import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed (Patt(..))
 
@@ -28,7 +28,7 @@ import           ParComp.Pattern.Typed (Patt(..))
 --------------------------------------------------
 
 
--- | Identity function.
+-- | Identity pattern
 identity :: (Patt repr) => repr (a -> a)
 identity = letIn (local "x") (local "x") 
 

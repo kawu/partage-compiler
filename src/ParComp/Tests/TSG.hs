@@ -24,7 +24,7 @@ import qualified Data.Set as S
 import           Data.Maybe (fromJust)
 
 import qualified ParComp.Pattern.Untyped as U
-import           ParComp.Pattern.Untyped (Fun(..), Pred(..))
+import           ParComp.Pattern.Untyped (Fun(..))
 import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed
   ( Pattern, Patt(..), Cond,
@@ -132,15 +132,26 @@ lastMaybe = \case
   _ : xs -> lastMaybe xs
 
 
+-- -- | Does the body of the dotted rule ends with the dot?
+-- endsWithDotP :: Pred Body
+-- endsWithDotP = endsWithP "endsWithDotP" Nothing
+--
+--
+-- -- | Check if the list ends with dot.  If so, return it as is.
+-- endsWithP :: (Eq a) => T.Text -> a -> Pred [a]
+-- endsWithP txt y = Pred txt $ \xs ->
+--   lastMaybe xs == Just y
+
+
 -- | Does the body of the dotted rule ends with the dot?
-endsWithDotP :: Pred Body
+endsWithDotP :: Fun Body Bool
 endsWithDotP = endsWithP "endsWithDotP" Nothing
 
 
 -- | Check if the list ends with dot.  If so, return it as is.
-endsWithP :: (Eq a) => T.Text -> a -> Pred [a]
-endsWithP txt y = Pred txt $ \xs ->
-  lastMaybe xs == Just y
+endsWithP :: (Eq a) => T.Text -> a -> Fun [a] Bool
+endsWithP txt y = Fun txt $ \xs -> do
+  return (lastMaybe xs == Just y)
 
 
 --------------------------------------------------
@@ -201,17 +212,26 @@ nodeLabel x = case T.splitOn "_" x of
 
 -- | Leaf node predicate
 leaf :: Grammar -> Pattern Node -> Pattern Cond
-leaf gram = check $ Pred "leaf" $ \x -> x `S.member` leafs gram
+-- leaf gram = check $ Pred "leaf" $ \x -> x `S.member` leafs gram
+leaf gram =
+  let namedFun = Fun "leaf" $ \x -> pure (x `S.member` leafs gram)
+   in cond . map (fun namedFun)
 
 
 -- | Root node predicate
 root :: Grammar -> Pattern Node -> Pattern Cond
-root gram = check $ Pred "root" $ \x -> x `S.member` roots gram
+-- root gram = check $ Pred "root" $ \x -> x `S.member` roots gram
+root gram =
+  let namedFun = Fun "root" $ \x -> pure (x `S.member` roots gram)
+   in cond . map (fun namedFun)
 
 
 -- | Internal node predicate
 internal :: Grammar -> Pattern Node -> Pattern Cond
-internal gram = check $ Pred "internal" $ \x -> x `S.member` inter gram
+-- internal gram = check $ Pred "internal" $ \x -> x `S.member` inter gram
+internal gram =
+  let namedFun = Fun "internal" $ \x -> pure (x `S.member` inter gram)
+   in cond . map (fun namedFun)
 
 
 --------------------------------------------------
