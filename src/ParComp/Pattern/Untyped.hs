@@ -324,8 +324,8 @@ data Cond t
   -- ^ Logical conjunction
   | OrC (Cond t) (Cond t)
   -- ^ Logical disjunction
-  | TrueC
-  -- ^ Always True
+--   | TrueC
+--   -- ^ Always True
   | TrueP t
   -- ^ Boolean pattern condition
   deriving (Show, Eq, Ord)
@@ -1141,7 +1141,7 @@ check Strict = \case
 --     guard flag
   And cx cy -> check Strict cx  >> check Strict cy
   OrC cx cy -> check Strict cx <|> check Strict cy
-  TrueC -> pure ()
+--   TrueC -> pure ()
   TrueP p -> do
     x <- close p
     guard $ x == true I
@@ -1176,7 +1176,7 @@ check Lazy = \case
   -- determine its status yet (see (*) above).  Hence, negating the embedded
   -- result doesn't make sense.
   -- Neg c -> not <$> check Lazy c
-  TrueC -> pure ()
+--   TrueC -> pure ()
   TrueP px -> do
     cx <- closeable px
     case cx of
@@ -1353,7 +1353,7 @@ closeableC = \case
   OrC cx cy -> undefined
   -- OrC cx cy -> (&&) <$> closeableC cx <*> closeableC cy
   -- Neg c -> closeableC c
-  TrueC -> pure True
+--   TrueC -> pure True
   TrueP p -> closeable p
 
 
@@ -1511,7 +1511,7 @@ getLockVarsC = \case
   -- NB: `alt` is not necessary since `getLockVar` doesn't modify the state
   OrC c1 c2 -> getLockVarsC c1 <|> getLockVarsC c2
   -- Neg c -> getLockVarsC c
-  TrueC -> pure S.empty
+--   TrueC -> pure S.empty
   TrueP p ->
     closeable p >>= \case
       True  -> pure $ S.singleton p

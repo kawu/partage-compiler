@@ -128,7 +128,7 @@ class Patt (repr :: * -> *) where
   eq      :: repr a -> repr a -> repr Cond
   andC    :: repr Cond -> repr Cond -> repr Cond
   orC     :: repr Cond -> repr Cond -> repr Cond
-  true    :: repr Cond
+  -- true    :: repr Cond
   -- check   :: (IsItem a) => U.Pred a -> repr a -> repr Cond
 
   ------------------------------------------
@@ -186,7 +186,7 @@ instance Patt Pattern where
   eq (Patt x) (Patt y)      = Cond (U.Eq x y)
   andC (Cond x) (Cond y)    = Cond (U.And x y)
   orC  (Cond x) (Cond y)    = Cond (U.OrC x y)
-  true                      = Cond U.TrueC
+  -- true                      = Cond U.TrueC
   -- check p (Patt x)          = Cond (U.Check (encodePred p) x)
 
   letIn (Patt x) (Patt y)   = Patt (U.letP x U.anyP y)
