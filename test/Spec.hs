@@ -64,8 +64,9 @@ unitTests = testGroup "Unit tests"
   , testCase "Util.append" $ do
       Ty.apply U.append ([1, 2], [3]) @?= [[1, 2, 3 :: Int]]
 
+  -- Check if we can still match the original item after applying via
   , testCase "via ... `and` ..." $ do
-      let f = letIn (local "x") (const ())
+      let f = letIn any (const ())
           p = via f any `and` pair (const 1) (const 2)
           x = (1 :: Int, 2 :: Int)
       Ty.match p x @?= True
