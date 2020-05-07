@@ -98,6 +98,7 @@ class Patt (repr :: * -> *) where
   eq      :: repr a -> repr a -> repr Bool
   andC    :: repr Bool -> repr Bool -> repr Bool
   orC     :: repr Bool -> repr Bool -> repr Bool
+  true    :: repr Bool
   check   :: (IsItem a) => U.Pred a -> repr a -> repr Bool
 
   -- Defining functions
@@ -150,6 +151,7 @@ instance Patt Pattern where
   with (Patt x) (Cond c)    = Patt (U.withP x c)
   eq (Patt x) (Patt y)      = Cond (U.Eq x y)
   orC  (Cond x) (Cond y)    = Cond (U.OrC x y)
+  true                      = Cond U.TrueC
   andC (Cond x) (Cond y)    = Cond (U.And x y)
   check p (Patt x)          = Cond (U.Check (encodePred p) x)
 

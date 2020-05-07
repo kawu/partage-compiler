@@ -1260,25 +1260,26 @@ close p =
         it <- close p
         check Strict c
         return it
-      -- Note that the implementation for `Via` requires performing the match
-      -- with possibly global variables.  One situation where this makes sense
-      -- is in the context of matching the @Let x e y@ pattern, where @y@ can
-      -- contain global variables (if we allow it, which seems useful).
-      Via p x -> do
-        it <- close p
-        match Strict x it
       -- Not sure what to do with the two patterns below.  The intuitive
       -- implementations are commented out below, but they would not
       -- necessarily provide the desired behavior.  I guess we need some good
       -- examples showing what to do with those cases (if anything).
+      Via _ _ -> error "close Via"
       Fix _ -> error "close Fix"
       Rec -> error "close Rec"
---   Fix p ->
---     withFix p $ do
---       close p
---   Rec -> do
---     p <- fixed
---     close p
+--       Fix p ->
+--         withFix p $ do
+--           close p
+--       Rec -> do
+--         p <- fixed
+--         close p
+--       -- Note that the implementation for `Via` requires performing the match
+--       -- with possibly global variables.  One situation where this makes sense
+--       -- is in the context of matching the @Let x e y@ pattern, where @y@ can
+--       -- contain global variables (if we allow it, which seems useful).
+--       Via p x -> do
+--         it <- close p
+--         match Strict x it
 
 
 -- | Is the given pattern possible to close?

@@ -71,6 +71,10 @@ unitTests = testGroup "Unit tests"
           x = (1 :: Int, 2 :: Int)
       Ty.match p x @?= True
 
+  -- Check if we can interpret Boolean functions as predicates
+  , testCase "with any (const True)" $ do
+      let p = with any (const True)
+      Ty.match p () @?= True
   ]
 
 
