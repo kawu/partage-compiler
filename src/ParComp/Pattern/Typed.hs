@@ -286,8 +286,8 @@ cons x xs = tag 1 . build (:) $ add x (add xs nix)
 
 -- | Curry the function and apply it to the given arguments.
 bimap :: (Patt repr, IsItem b, IsItem c, IsItem d)
-      => U.Fun (b, c) d -> repr b -> repr c -> repr d
-bimap f x y = map (fun f) (pair x y)
+      => repr ((b, c) -> d) -> repr b -> repr c -> repr d
+bimap f x y = map f (pair x y)
 
 
 -- -- | Check if the predicate is satisfied on the current item.

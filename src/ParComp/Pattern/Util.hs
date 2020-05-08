@@ -6,16 +6,15 @@
 
 module ParComp.Pattern.Util
   (
-  -- * General
-    identity
-
-  -- * Fun-based
-  -- ** Lists
-  , append
+  -- * Lists
+    append
   , cons
   , splitOn
   ) where
 
+
+import           Prelude
+import qualified Prelude as P
 
 import qualified ParComp.Pattern.Untyped as U
 import           ParComp.Pattern.Untyped (IsItem(..), Fun(..))
@@ -28,13 +27,13 @@ import           ParComp.Pattern.Typed (Patt(..))
 --------------------------------------------------
 
 
--- | Identity pattern
-identity :: (Patt repr) => repr (a -> a)
-identity = letIn (local "x") (local "x") 
+-- -- | Constant
+-- constF :: (IsItem a, IsItem b, Patt repr) => a -> repr (b -> a)
+-- constF x = fun $ Fun "Util.constF" $ P.const [x]
 
 
 --------------------------------------------------
--- Fun-based
+-- Lists
 --------------------------------------------------
 
 

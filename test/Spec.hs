@@ -121,6 +121,10 @@ patternUnitTests = testGroup "(patterns)"
       match (left $ const 1) (Right () :: Either Int ()) @?= False
   , testCase "match (right unit) (Left 1)" $ do
       match (right unit) (Left 1 :: Either Int ()) @?= False
+
+--   -- Check if illegal patterns can be used as conditions (e.g. local, var, any)
+--   , testCase "illegal patterns as conditions" $ do
+--       match (any `with` any) True @?= True
   ]
 
 

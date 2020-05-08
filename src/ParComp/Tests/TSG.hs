@@ -23,7 +23,6 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import           Data.Maybe (fromJust)
 
-import qualified ParComp.Pattern.Untyped as U
 import           ParComp.Pattern.Untyped (Fun(..))
 import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed
@@ -31,6 +30,8 @@ import           ParComp.Pattern.Typed
   pair, nothing, just, nil, cons
   , left, right, bimap, guard
   )
+import qualified ParComp.Pattern.Util as U
+
 import           ParComp.Parser (chartParse)
 
 import           Debug.Trace (trace)
@@ -98,12 +99,6 @@ dot = nothing
 (.:) :: Pattern a -> Pattern [a] -> Pattern [a]
 (.:) = cons
 infixr 5 .:
-
-
--- | Append two lists.
-append :: Fun ([a], [a]) [a]
-append = Fun "append" $ \(xs, ys) -> do
-  return (xs ++ ys)
 
 
 -- | Split at dot.
@@ -278,19 +273,19 @@ complete gram =
                (map label v_C)
           )
           ( and (leaf gram v_B)
-                 (root gram v_C)
+                (root gram v_C)
           )
       )
       ( and
           ( eq v_B v_C )
           ( and (internal gram v_B)
-                 (internal gram v_C)
+                (internal gram v_C)
           )
       )
 
     downP = item
       (rule v_A
-        ( bimap append
+        ( bimap U.append
             v_alpha
             (just v_B .: dot .: v_beta)
         )
@@ -329,14 +324,14 @@ predict gram =
                (map label v_C)
           )
           ( and (leaf gram v_B)
-                 (root gram v_C)
+                (root gram v_C)
           )
       )
       ( and
           ( eq v_B v_C
           )
           ( and (internal gram v_B)
-                 (internal gram v_C)
+                (internal gram v_C)
           )
       )
 
@@ -384,7 +379,7 @@ testTSG = do
         , ("VP_17", ["Adv_18", "V_19", "NP_20"])
         , ("DET_21", ["a_1"])
         , ("DET_22", ["some_2"])
-        , ("N_23", ["dog_3"])
+        , ("N_23", ["man_3"])
         , ("N_24", ["pizza_4"])
         , ("V_25", ["eats_5"])
         , ("V_26", ["runs_6"])
@@ -393,12 +388,12 @@ testTSG = do
         ]
 --         [ ("NP_1", ["DET_2", "N_3"])
 --         , ("DET_2", ["a_3"])
---         , ("N_4", ["dog_5"])
+--         , ("N_4", ["man_5"])
 --         ]
 
       -- Input sentence
-      -- sent = ["a", "dog"]
-      sent = ["a", "dog", "quickly", "eats", "some", "pizza"]
+      -- sent = ["a", "man"]
+      sent = ["a", "man", "quickly", "eats", "some", "pizza"]
 
       gram = mkGram sent cfgRules
       baseItems = cfgBaseItems sent cfgRules
