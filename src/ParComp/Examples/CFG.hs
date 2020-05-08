@@ -5,7 +5,7 @@
 -- | Context-free grammar parsing
 
 
-module ParComp.Tests.CFG
+module ParComp.Examples.CFG
   ( runTestCFG
   ) where
 

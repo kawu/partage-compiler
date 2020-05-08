@@ -6,7 +6,7 @@
 -- | TSG parsing example
 
 
-module ParComp.Tests.TSG
+module ParComp.Examples.TSG
   ( testTSG
   ) where
 
@@ -26,8 +26,8 @@ import           Data.Maybe (fromJust)
 import           ParComp.Pattern.Untyped (Fun(..))
 import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed
-  ( Pattern, Patt(..), Cond,
-  pair, nothing, just, nil, cons
+  ( Pattern, Patt(..), Cond
+  , pair, nothing, just, nil, cons
   , left, right, bimap, guard
   )
 import qualified ParComp.Pattern.Util as U
