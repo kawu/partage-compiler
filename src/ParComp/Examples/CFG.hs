@@ -28,68 +28,99 @@ import qualified ParComp.Pattern.Util as Util
 import           ParComp.Parser (chartParse)
 
 
---------------------------------------------------
--- CFG item types
---------------------------------------------------
+-------------------------------------------------------------------------------
+-- Item types
+-------------------------------------------------------------------------------
 
 
 -- | Item's span
 type Span = (Int, Int)
 
+
 -- | Grammar node
 type Node = T.Text
+
 
 -- | Non-terminal/terminal symbol
 type Sym = T.Text
 
+
 -- | Dotted rule's head
 type Head = Node
+
 
 -- | Dotted rule's body (`Nothing` represents the dot)
 type Body = [Maybe Node]
 
+
 -- | Dotted rule
 type DotRule = (Head, Body)
+
 
 -- | Active item
 type Active = (DotRule, Span)
 
+
 -- | Top-level item: either an actual active item or a grammar dotted rule.
--- The rule items are later used in the prediction deduction rule (because we
+-- Top-level rules are later used in the prediction deduction rule (because we
 -- can).
 type Item = Either Active DotRule
+
+
+-------------------------------------------------------------------------------
+-- Item patterns
+--
+-- Note that it should not be necessary to define the item patterns manually.
+-- The plan is to automatically generated such patterns for custom data types
+-- using Template Haskell.
+-------------------------------------------------------------------------------
 
 
 -- | Top-level active item pattern
 item :: Patt repr => repr DotRule -> repr Span -> repr Item
 item r s = left $ pair r s
 
+
 -- | Dotted rule as a top-level item
 top :: Patt repr => repr DotRule -> repr Item
 top = right
+
 
 -- | Dotted rule
 rule :: Patt repr => repr Head -> repr Body -> repr DotRule
 rule = pair
 
+
 -- | Item's span
 span :: Patt repr => repr Int -> repr Int -> repr Span
 span = pair
+
 
 -- | Position in a sentence
 pos :: Patt repr => Int -> repr Int
 pos = const
 
+
 -- | Dotted rule's head
 head :: Patt repr => Node -> repr Head
 head = const
+
 
 -- | Dot in a dotted rule
 dot :: Patt repr => repr (Maybe Node)
 dot = nothing
 
 
--- | Node label
+-------------------------------------------------------------------------------
+-- Grammar representation
+--
+-- In this example, we represent grammar nodes as strings with non-terminal /
+-- terminal labels and ID suffixes.  For instance, "NP_1" is a node with ID "1"
+-- and label "NP".  Terminal nodes have no IDs.
+-------------------------------------------------------------------------------
+
+
+-- | Pattern to extract the non-terminal / terminal symbol in a node
 label :: Patt repr => repr (Node -> Sym)
 label =
   fun (Fun "label" nodeLabel)
@@ -97,12 +128,12 @@ label =
     nodeLabel x = case T.splitOn "_" x of
       [term] -> [term]
       [nonTerm, _nodeId] -> [nonTerm]
-      _ -> error $ "nodeLabel: unhandled symbol (" ++ T.unpack x ++ ")"
+      _ -> error $ "label: unhandled symbol (" ++ T.unpack x ++ ")"
 
 
---------------------------------------------------
--- Rules
---------------------------------------------------
+-------------------------------------------------------------------------------
+-- CFG deduction rules
+-------------------------------------------------------------------------------
 
 
 -- | CFG complete rule
@@ -180,9 +211,9 @@ predict =
       (span (var "j") (var "j"))
 
 
---------------------------------------------------
+-------------------------------------------------------------------------------
 -- Axioms 
---------------------------------------------------
+-------------------------------------------------------------------------------
 
 
 -- | Enumerate base items for the given sentence and grammar.
@@ -206,9 +237,9 @@ cfgBaseItems inp cfgRules =
     mkRule hd bd = (hd, Nothing : fmap Just bd)
 
 
---------------------------------------------------
+-------------------------------------------------------------------------------
 -- Main 
---------------------------------------------------
+-------------------------------------------------------------------------------
 
 
 -- | Test CFG-like grammar (instead of non-terminals, nodes are used)
@@ -263,7 +294,7 @@ runTestCFG = do
 infixr 5 .:
 
 
--- | Split a list at a given value.
+-- | Split a rule's body at the dot.
 splitAtDot :: Patt repr => repr (Body -> (Body, Body))
 splitAtDot =
   fun (Fun "splitAtDot" ((:[]) . go))
