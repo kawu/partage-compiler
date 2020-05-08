@@ -12,24 +12,17 @@ module ParComp.Tests.CFG
 
 import           Prelude hiding
   (splitAt, span, map, or, and, any, const, head)
-import qualified Prelude as P
-
-import           Control.Monad (forM_)
-import qualified Control.Monad as P
 
 import qualified Data.Text as T
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
-import           Data.Maybe (fromJust)
 
 import           ParComp.Pattern.Untyped (Fun(..))
-import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed
-  ( Pattern(..), Patt(..)
+  ( Pattern(..), Patt(..), Rule(..)
   , pair, nothing, just, nil, cons, left, right, bimap
   )
 import qualified ParComp.Pattern.Util as Util
-import qualified ParComp.Pattern.Util.Native as N
 
 -- You can alternatively import chartParse from ParComp.SimpleParser
 import           ParComp.Parser (chartParse)
@@ -113,13 +106,13 @@ label =
 
 
 -- | CFG complete rule
-complete :: Ty.Rule Item
+complete :: Rule Item
 complete =
 
-  Ty.Rule
-  { Ty.antecedents  = [leftP, rightP]
-  , Ty.consequent = downP
-  , Ty.condition = condP
+  Rule
+  { antecedents  = [leftP, rightP]
+  , consequent = downP
+  , condition = condP
   }
 
   where
@@ -168,9 +161,9 @@ complete =
 
 
 -- | CFG predict rule
-predict :: Ty.Rule Item
+predict :: Rule Item
 predict =
-  Ty.Rule [leftP, rightP] downP condP
+  Rule [leftP, rightP] downP condP
   where
     leftP = item
       (rule any
