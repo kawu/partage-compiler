@@ -37,12 +37,19 @@ import           ParComp.Parser (chartParse)
 type Span = (Int, Int)
 
 
--- | Grammar node
-type Node = T.Text
-
-
--- | Non-terminal/terminal symbol
+-- | Non-terminal/terminal symbol (label)
 type Sym = T.Text
+
+
+-- | Node identifier
+type ID = T.Text
+
+
+-- | Grammar node is either a non-terminal (label + identifier) node or a
+-- terminal (only label) node.  In CFG there's no need to decorate nodes with
+-- identifiers, we do that for the sake of example (such identifiers can be
+-- useful in TSG/TAG parsing, for instance).
+type Node = Either (Sym, ID) Sym
 
 
 -- | Dotted rule's head
@@ -113,22 +120,16 @@ dot = nothing
 
 -------------------------------------------------------------------------------
 -- Grammar representation
---
--- In this example, we represent grammar nodes as strings with non-terminal /
--- terminal labels and ID suffixes.  For instance, "NP_1" is a node with ID "1"
--- and label "NP".  Terminal nodes have no IDs.
 -------------------------------------------------------------------------------
 
 
--- | Pattern to extract the non-terminal / terminal symbol in a node
+-- | Pattern to extract the non-terminal / terminal symbol of a node
 label :: Patt repr => repr (Node -> Sym)
 label =
   fun (Fun "label" nodeLabel)
   where
-    nodeLabel x = case T.splitOn "_" x of
-      [term] -> [term]
-      [nonTerm, _nodeId] -> [nonTerm]
-      _ -> error $ "label: unhandled symbol (" ++ T.unpack x ++ ")"
+    nodeLabel (Left (nonTerm, _nodeId)) = [nonTerm]
+    nodeLabel (Right term) = [term]
 
 
 -------------------------------------------------------------------------------
@@ -230,7 +231,7 @@ cfgBaseItems inp cfgRules =
       return $ Left (mkRule hd bd, (0, 0))
     base2 = do
       (i, term) <- zip [0..n-1] inp
-      return $ Left (mkRule term [], (i, i + 1))
+      return $ Left (mkRule (Right term) [], (i, i + 1))
     baseRules = do
       (hd, bd) <- S.toList cfgRules
       return $ Right (mkRule hd bd)
@@ -244,7 +245,7 @@ cfgBaseItems inp cfgRules =
 
 -- | Test CFG-like grammar (instead of non-terminals, nodes are used)
 testCFG :: S.Set (Node, [Node])
-testCFG = S.fromList
+testCFG = S.fromList $ fmap prepareRule
   [ ("NP_1", ["N_2"])
   , ("NP_3", ["DET_4", "N_5"])
   , ("S_6", ["NP_7", "VP_8"])
@@ -260,6 +261,15 @@ testCFG = S.fromList
   , ("V_26", ["runs"])
   , ("Adv_27", ["quickly"])
   ]
+  where
+    prepareRule (hd, bd) =
+      ( prepareNode hd
+      , fmap prepareNode bd
+      )
+    prepareNode x = case T.splitOn "_" x of
+      [term] -> Right term
+      [nonTerm, nodeId] -> Left (nonTerm, nodeId)
+      _ -> error $ "testCFG: unhandled symbol (" ++ T.unpack x ++ ")"
 
 
 -- | Test sentence to parse
