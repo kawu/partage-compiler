@@ -272,18 +272,18 @@ complete gram =
       )
       (span v_j v_k)
 
-    condP = orC
-      ( andC
+    condP = or
+      ( and
           ( eq (map label v_B)
                (map label v_C)
           )
-          ( andC (leaf gram v_B)
+          ( and (leaf gram v_B)
                  (root gram v_C)
           )
       )
-      ( andC
+      ( and
           ( eq v_B v_C )
-          ( andC (internal gram v_B)
+          ( and (internal gram v_B)
                  (internal gram v_C)
           )
       )
@@ -323,19 +323,19 @@ predict gram =
 
     rightP = top $ rule v_C any `and` v_rule
 
-    condP = orC
-      ( andC
+    condP = or
+      ( and
           ( eq (map label v_B)
                (map label v_C)
           )
-          ( andC (leaf gram v_B)
+          ( and (leaf gram v_B)
                  (root gram v_C)
           )
       )
-      ( andC
+      ( and
           ( eq v_B v_C
           )
-          ( andC (internal gram v_B)
+          ( and (internal gram v_B)
                  (internal gram v_C)
           )
       )

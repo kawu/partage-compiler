@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 
-import           Prelude hiding (any, const, and)
+import           Prelude hiding (any, const, and, or)
 
 import           Test.Tasty
 import           Test.Tasty.SmallCheck as SC
@@ -73,11 +73,11 @@ patternUnitTests = testGroup "(patterns)"
       match (any `with` isTrue (const True)) () @?= True
   , testCase "const False" $ do
       match (any `with` isTrue (const False)) () @?= False
-  , testCase "const False `andC` const True" $ do
-      let c = isTrue (const False) `andC` isTrue (const True)
+  , testCase "const False `and` const True" $ do
+      let c = isTrue (const False) `and` isTrue (const True)
       match (any `with` c) () @?= False
-  , testCase "const False `orC` const True" $ do
-      let c = isTrue (const False) `orC` isTrue (const True)
+  , testCase "const False `or` const True" $ do
+      let c = isTrue (const False) `or` isTrue (const True)
       match (any `with` c) () @?= True
 
 --   -- Check if we can interpret conditions as Boolean functions

@@ -129,8 +129,8 @@ class Patt (repr :: * -> *) where
   -- | Cast a predicate pattern as a condition
   isTrue  :: repr Bool -> repr Cond
   eq      :: repr a -> repr a -> repr Cond
-  andC    :: repr Cond -> repr Cond -> repr Cond
-  orC     :: repr Cond -> repr Cond -> repr Cond
+  -- andC    :: repr Cond -> repr Cond -> repr Cond
+  -- orC     :: repr Cond -> repr Cond -> repr Cond
   -- true    :: repr Cond
   -- check   :: (IsItem a) => U.Pred a -> repr a -> repr Cond
 
@@ -162,7 +162,10 @@ instance Patt Pattern where
   const x                   = Patt (U.encodeP x)
 
   and (Patt x) (Patt y)     = Patt (U.viaP x y)
+  and (Cond x) (Cond y)     = Cond (U.And x y)
+
   or  (Patt x) (Patt y)     = Patt (U.orP x y)
+  or  (Cond x) (Cond y)     = Cond (U.OrC x y)
 
   fun f                     = FunP (encodeFun f)
   app (FunP f)              = Patt (U.appP f)
@@ -187,8 +190,6 @@ instance Patt Pattern where
   isTrue (Patt x)           = Cond (U.IsTrue x)
   with (Patt x) (Cond y)    = Patt (U.withP x y)
   eq (Patt x) (Patt y)      = Cond (U.Eq x y)
-  andC (Cond x) (Cond y)    = Cond (U.And x y)
-  orC  (Cond x) (Cond y)    = Cond (U.OrC x y)
   -- true                      = Cond U.TrueC
   -- check p (Patt x)          = Cond (U.Check (encodePred p) x)
 
