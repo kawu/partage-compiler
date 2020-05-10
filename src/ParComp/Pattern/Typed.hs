@@ -73,13 +73,6 @@ data Pattern a
   deriving (Show, Eq, Ord)
 
 
--- -- | Cast a pattern as a condition.
--- asCond :: Pattern a -> U.Cond U.Pattern
--- asCond c = case c of
---   Patt x -> U.TrueP x
---   Cond x -> x
-
-
 -- | Condition marker
 data Cond
 

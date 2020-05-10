@@ -132,22 +132,13 @@ import           Debug.Trace (trace)
 data Item expr where
   Unit  :: Item expr
   Sym   :: {-# UNPACK #-} !T.Text -> Item expr
-
---   Pair  :: expr -> expr -> Item expr
---   Union :: Either expr expr -> Item expr
-
-  -- New primitives below
-
-  Vec   :: A.Array expr -> Item expr
-  -- ^ Non-empty vector of expressions (to represent product types)
+  -- | Non-empty vector of expressions (to represent product types)
   -- (TODO: or maybe we could/should use it to represent unit, too?)
-
+  Vec   :: A.Array expr -> Item expr
+  -- | Tagged expression (to represent sum types)
   Tag   :: {-# UNPACK #-} !Int -> expr -> Item expr
-  -- ^ Tagged expression (to represent sum types)
-
 --   Num   :: {-# UNPACK #-} !Int -> Item expr
 --   -- ^ Integral number
-
   deriving (Show, Eq, Ord)
 
 
