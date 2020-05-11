@@ -23,7 +23,7 @@ import           Pipes (MonadIO)
 
 import           Data.Lens.Light
 
-import           Data.Maybe (maybeToList)
+import           Data.Maybe (maybeToList, fromJust)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 import qualified Data.Map.Strict as M
@@ -39,16 +39,15 @@ import           ParComp.Pattern.Typed (Pattern(..), Patt(..))
 --------------------------------------------------
 
 
--- | Index is a map from `Key`s to sets of items.  Each `Key` is defined within
--- the context of the corresponding `Lock` (see `_indexMap` below).
-type Index = M.Map U.Key (S.Set U.Rigit)
+-- | Index type: NEW
+type Index = M.Map U.IndexKey (M.Map U.KeyVal (S.Set U.Rigit))
 
 
 -- | State of the parser
 data State = State
   { _agenda :: S.Set U.Rigit
   , _chart :: S.Set U.Rigit
-  , _indexMap :: M.Map U.Lock Index
+  , _indexMap :: M.Map U.IndexTemplate Index
   } deriving (Show, Eq, Ord)
 $( makeLenses [''State] )
 
@@ -95,41 +94,63 @@ addToChart x = do
 --     T.putStr ">>> Item: "
 --     print x
   ST.modify' $ modL' chart (S.insert x)
-  locks <- ST.gets $ M.keys . getL indexMap
-  forM_ (U.groupByTemplate locks) $ \lockGroup -> do
+  -- For each index (template)
+  tempKeys <- ST.gets $ getL indexMap
+  forM_ (M.keys tempKeys) $ \template -> do
 --     liftIO $ do
 --       T.putStr ">>> Template: "
---       print . U.lockTemplate $ head lockGroup
-    Pipes.runListT $ do
-      (lock, key) <- U.itemKeyFor x lockGroup
---       liftIO $ do
---         T.putStr ">>> Lock: "
---         print lock
---         T.putStr ">>> Key: "
---         print key
-      lift $ saveKey lock key x
+--       print template
+    U.runMatchT $ do
+      -- Match the item with the template
+      U.match U.Lazy template x
+      -- For each key
+      let keys = M.keys . fromJust $ M.lookup template tempKeys
+      U.forEach keys $ \key -> do
+        -- Determine the value of the key
+        val <- U.keyValFor key
+--         liftIO $ do
+--           T.putStr ">>> Lock: "
+--           print $ U.Lock template key
+--           T.putStr ">>> KeyVal: "
+--           print val
+        -- Save the item in the index
+        U.lift $ saveKeyVal template key val x
 
 
 -- | Register an index with the given lock.
 registerLock :: (Monad m) => U.Lock -> ChartT m ()
-registerLock lock =
-  ST.modify' $ modL' indexMap (M.insert lock M.empty)
+registerLock lock = do
+  let temp = U.lockTemplate lock
+      key = U.lockKey lock
+  ST.modify'
+    . modL' indexMap
+    $ M.insertWith
+        M.union
+        -- (M.unionWith (M.unionWith S.union))
+        temp
+        (M.singleton key M.empty)
 
 
 -- | Save key for the given lock, together with the corresponding item.
-saveKey :: (Monad m) => U.Lock -> U.Key -> U.Rigit -> ChartT m ()
-saveKey lock key item = ST.modify'
+saveKeyVal
+  :: (Monad m)
+  => U.IndexTemplate
+  -> U.IndexKey
+  -> U.KeyVal
+  -> U.Rigit
+  -> ChartT m ()
+saveKeyVal temp key val item = ST.modify'
   . modL' indexMap
   $ M.insertWith
-      (M.unionWith S.union)
-      lock
-      (M.singleton key (S.singleton item))
+      (M.unionWith (M.unionWith S.union))
+      temp
+      (M.singleton key (M.singleton val (S.singleton item)))
 
 
 -- | Retrieve the index with the given lock.
-retrieveIndex :: (Monad m) => U.Lock -> ChartT m Index
-retrieveIndex lock =
-  ST.gets $ maybe M.empty id . M.lookup lock . getL indexMap
+retrieveIndex :: (Monad m) => U.IndexTemplate -> ChartT m Index
+retrieveIndex template =
+  ST.gets $ maybe M.empty id . M.lookup template . getL indexMap
 
 
 --------------------------------------------------
@@ -153,19 +174,22 @@ applyDirRule ruleName rule mainItem = do
   case U.otherAntes rule of
     [otherPatt] -> do
       lock <- U.mkLock otherPatt
+      let template = U.lockTemplate lock
+          key = U.lockKey lock
 --       liftIO $ do
 --         T.putStr "@@@ Lock: "
 --         print lock
-      index <- U.lift $ retrieveIndex lock
+      index <- U.lift $ retrieveIndex template
+      let valItemMap = maybe M.empty id $ M.lookup key index
 --       liftIO $ do
 --         T.putStr "@@@ Index: "
---         print index
-      key <- U.keyFor $ U.lockVars lock
+--         print valItemMap
+      keyVal <- U.keyValFor $ U.lockKey lock
 --       liftIO $ do
 --         T.putStr "@@@ Key: "
---         print key
-      let otherItems =
-            maybe [] S.toList $ M.lookup key index
+--         print keyVal
+      let otherItems = do
+            maybe [] S.toList $ M.lookup keyVal valItemMap
       U.forEach otherItems $ \otherItem -> do
 --         liftIO $ do
 --           T.putStr "@@@ Other: "

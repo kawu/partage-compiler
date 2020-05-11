@@ -392,8 +392,8 @@ testTSG = do
 --         ]
 
       -- Input sentence
-      -- sent = ["a", "man"]
       sent = ["a", "man", "quickly", "eats", "some", "pizza"]
+--       sent = ["a", "man"]
 
       gram = mkGram sent cfgRules
       baseItems = cfgBaseItems sent cfgRules

@@ -85,12 +85,12 @@ module ParComp.Pattern.Untyped
   , directRule
 
   -- * Indexing (locks and keys)
+  , IndexTemplate
+  , IndexKey
   , Lock (..)
-  , Key
+  , KeyVal
   , mkLock
-  , groupByTemplate
-  , itemKeyFor
-  , keyFor
+  , keyValFor
   , locksFor
 
   -- * Utils
@@ -1159,7 +1159,7 @@ check Lazy = \case
 --         flag <- pbody pred <$> close p
 --         guard flag
 --       False -> do
---         -- NB: We bind the pattern (see also `getLockVarsC`) with the unit
+--         -- NB: We bind the pattern (see also `getLockKeyC`) with the unit
 --         -- value to indicate that the value of the condition is True.
 --         bindPatt (withP unitP (Check pred p)) unit
   And cx cy -> check Lazy cx >> check Lazy cy
@@ -1420,43 +1420,52 @@ directRule rule = do
 --------------------------------------------------
 
 
+-- | Index template: a pattern which determines which items can be stored in the
+-- corresponding index structure.
+type IndexTemplate = Pattern
+
+
+-- | Index key: a set of patterns which describe a particular search criterion.
+type IndexKey = S.Set Pattern
+
+
 -- | Lock determines the indexing structure.
 --
 -- Each `Item` (`Pattern`) can be matched with the `Lock` to produce the
 -- corresponding `Key`(s).  These keys then allow to find the item (pattern) in
 -- the index corresponding to the lock.
 data Lock = Lock
-  { lockTemplate :: Pattern
+  { lockTemplate :: IndexTemplate
     -- ^ Lock's template
-  , lockVars :: S.Set Pattern
+  , lockKey :: IndexKey
     -- ^ Relevant variables and patterns, whose values need to be specified in
     -- the corresponding key
   } deriving (Show, Eq, Ord)
 
 
 -- | Key assigns values to the variables (and patterns) in the corresponding
--- lock (in `lockVars`, more precisely).
-type Key = M.Map Pattern Rigit
+-- lock (in `lockKey`, more precisely).
+type KeyVal = M.Map Pattern Rigit
 
 
 -- | Retrieve the bound variables and patterns for the lock.
-getLockVars :: (P.MonadIO m) => Pattern -> MatchT m (S.Set Pattern)
-getLockVars (P ip) = case ip of
+getLockKey :: (P.MonadIO m) => IndexTemplate -> MatchT m IndexKey
+getLockKey (P ip) = case ip of
 --   Const _ -> pure S.empty
   Unit -> pure S.empty
   Sym _ -> pure S.empty
---   Pair p1 p2 -> (<>) <$> getLockVars p1 <*> getLockVars p2
-  Vec v -> foldMap getLockVars v
+--   Pair p1 p2 -> (<>) <$> getLockKey p1 <*> getLockKey p2
+  Vec v -> foldMap getLockKey v
 --   Union up -> case up of
---     Left p -> getLockVars p
---     Right p -> getLockVars p
-  Tag _ x -> getLockVars x
-getLockVars (O op) = case op of
+--     Left p -> getLockKey p
+--     Right p -> getLockKey p
+  Tag _ x -> getLockKey x
+getLockKey (O op) = case op of
   Label v ->
     lookupVar v >>= \case
       Just it -> pure $ S.singleton (labelP v)
       Nothing -> pure S.empty
-  Local v -> error "getLockVars: encountered local variable!"
+  Local v -> error "getLockKey: encountered local variable!"
   Any -> pure S.empty
   Map fn p -> do
     closeable p >>= \case
@@ -1465,30 +1474,30 @@ getLockVars (O op) = case op of
   Map' f p -> do
     closeable p >>= \case
       True ->
-        trace "getLockVars: doesn't handle Map' with a closeable pattern" $
+        trace "getLockKey: doesn't handle Map' with a closeable pattern" $
           pure S.empty
       False -> pure S.empty
   App _ -> pure S.empty
   Or x y -> do
     -- NB: Since we assume that both @x@ and @y@ contain the same global
-    -- variables (see `globalVarsIn`), @getLockVars x@ and @getLockVars y@
+    -- variables (see `globalVarsIn`), @getLockKey x@ and @getLockKey y@
     -- should yield the same result.
-    s1 <- getLockVars x
-    s2 <- getLockVars y
+    s1 <- getLockKey x
+    s2 <- getLockKey y
     if s1 == s2
        then return s1
-       else error "getLockVars Or: different results for different branches"
+       else error "getLockKey Or: different results for different branches"
   -- Below, ignore `x` and `y`, which should contain local variables only
-  Via p x -> (<>) <$> getLockVars p <*> getLockVars x
-  With p c -> (<>) <$> getLockVars p <*> getLockVarsC c
-  Let x e y -> getLockVars e
-  Fix p -> getLockVars p
+  Via p x -> (<>) <$> getLockKey p <*> getLockKey x
+  With p c -> (<>) <$> getLockKey p <*> getLockKeyC c
+  Let x e y -> getLockKey e
+  Fix p -> getLockKey p
   Rec -> pure S.empty
 
 
 -- | Retrieve the bound variables and patterns for the lock.
-getLockVarsC :: (P.MonadIO m) => Cond Pattern -> MatchT m (S.Set Pattern)
-getLockVarsC = \case
+getLockKeyC :: (P.MonadIO m) => Cond Pattern -> MatchT m (S.Set Pattern)
+getLockKeyC = \case
   Eq px py -> do
     cx <- closeable px
     cy <- closeable py
@@ -1502,10 +1511,10 @@ getLockVarsC = \case
 --       -- currently the lock only supports patterns, and not conditions.
 --       True -> pure $ S.singleton (withP unitP (Check pred p))
 --       False -> pure S.empty
-  And c1 c2 -> (<>) <$> getLockVarsC c1 <*> getLockVarsC c2
+  And c1 c2 -> (<>) <$> getLockKeyC c1 <*> getLockKeyC c2
   -- NB: `alt` is not necessary since `getLockVar` doesn't modify the state
-  OrC c1 c2 -> getLockVarsC c1 <|> getLockVarsC c2
-  -- Neg c -> getLockVarsC c
+  OrC c1 c2 -> getLockKeyC c1 <|> getLockKeyC c2
+  -- Neg c -> getLockKeyC c
 --   TrueC -> pure S.empty
   IsTrue p ->
     closeable p >>= \case
@@ -1515,8 +1524,8 @@ getLockVarsC = \case
 
 -- | Retrieve the lock of the pattern.  The lock can be used to determine the
 -- corresponding indexing structure.
-mkLock :: (P.MonadIO m) => Pattern -> MatchT m Lock
-mkLock p = Lock p <$> getLockVars p
+mkLock :: (P.MonadIO m) => IndexTemplate -> MatchT m Lock
+mkLock p = Lock p <$> getLockKey p
 
 
 -- | Generate all the locks for the given rule.
@@ -1542,63 +1551,10 @@ _locksFor rule handler = do
       _ -> error "locksFor: doesn't handle non-binary rules"
 
 
--- | Group the set of locks by their templates.  Each group in the output list
--- will have the same `lockTemplate`.
-groupByTemplate :: [Lock] -> [[Lock]]
-groupByTemplate locks = M.elems . M.fromListWith (<>) $ do
-  lock <- locks
-  return (lockTemplate lock, [lock])
-
-
--- | Retrieve the key(s) of the item for the given set of locks with the same
--- template.
-itemKeyFor
-  :: (P.MonadIO m)
-  => Rigit
-  -> [Lock]
-  -> P.ListT m (Lock, Key)
-itemKeyFor item lockGroup = do
-  P.Select $
-    _itemKeyFor item lockGroup $
-      \lock key -> P.yield (lock, key)
-
-
--- | Retrieve the key(s) of the item for the given lock.
-_itemKeyFor
-  :: (P.MonadIO m)
-  => Rigit
-  -> [Lock]
-  -> (Lock -> Key -> m ()) -- ^ Monadic handler
-  -> m ()
-_itemKeyFor item lockGroup handler = do
-  runMatchT $ do
---     P.liftIO $ do
---       putStrLn "??? Matching START"
-    match Lazy groupTemplate item
---     P.liftIO $ do
---       putStrLn "??? Matching END"
-    forEach lockGroup $ \lock -> do
-      key <- keyFor $ lockVars lock
-      lift $ handler lock key
-  where
-    groupTemplate =
-      case S.toList groupTemplates of
-        [template] -> template
-        xs -> error $
-          "itemKeyFor: expected one lock template, got " ++ show (length xs)
-    groupTemplates = S.fromList $ do
-      lock <- lockGroup
-      return (lockTemplate lock)
-
-
 -- | Retrieve the values of the global variables in the lock, thus creating the
 -- key corresponding to the lock based on the current environment.
-keyFor
-  :: (P.MonadIO m)
-  => S.Set Pattern
-    -- ^ Lock variables
-  -> MatchT m Key
-keyFor vars = do
+keyValFor :: (P.MonadIO m) => IndexKey -> MatchT m KeyVal
+keyValFor vars = do
   let ps = S.toList vars
   fmap M.fromList . forM ps $ \p -> do
 --     P.liftIO $ do
