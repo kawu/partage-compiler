@@ -1,0 +1,32 @@
+Stack has not been tested with GHC versions above 8.6, and using 8.8.3, this may fail
+Stack has not been tested with Cabal versions above 2.4, but version 3.0.1.0 was found, this may fail
+partage-compiler> benchmarks
+Running 1 benchmarks...
+Benchmark benchmark-examples: RUNNING...
+benchmarking examples/CFG (simple parser)
+time                 1.196 s    (1.188 s .. 1.206 s)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 1.193 s    (1.191 s .. 1.195 s)
+std dev              2.662 ms   (1.074 ms .. 3.304 ms)
+variance introduced by outliers: 19% (moderately inflated)
+
+benchmarking examples/CFG (regular parser)
+time                 33.84 ms   (33.68 ms .. 34.09 ms)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 33.79 ms   (33.74 ms .. 33.89 ms)
+std dev              140.0 μs   (79.38 μs .. 228.9 μs)
+
+benchmarking examples/TSG (simple parser)
+time                 511.4 ms   (500.5 ms .. 524.0 ms)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 513.2 ms   (511.4 ms .. 516.2 ms)
+std dev              2.944 ms   (406.2 μs .. 3.738 ms)
+variance introduced by outliers: 19% (moderately inflated)
+
+benchmarking examples/TSG (regular parser)
+time                 35.75 ms   (35.68 ms .. 35.82 ms)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 35.70 ms   (35.66 ms .. 35.75 ms)
+std dev              88.54 μs   (67.79 μs .. 127.8 μs)
+
+Benchmark benchmark-examples: FINISH
