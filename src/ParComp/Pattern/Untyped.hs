@@ -95,6 +95,9 @@ module ParComp.Pattern.Untyped
 
   -- * Utils
   , pickOne
+
+  -- * Provisional
+  , dummyMatch
   ) where
 
 
@@ -1451,14 +1454,15 @@ type KeyVal = M.Map Pattern Rigit
 -- | Retrieve the bound variables and patterns for the lock.
 getLockKey :: (P.MonadIO m) => IndexTemplate -> MatchT m IndexKey
 getLockKey (P ip) = case ip of
---   Const _ -> pure S.empty
   Unit -> pure S.empty
   Sym _ -> pure S.empty
---   Pair p1 p2 -> (<>) <$> getLockKey p1 <*> getLockKey p2
-  Vec v -> foldMap getLockKey v
---   Union up -> case up of
---     Left p -> getLockKey p
---     Right p -> getLockKey p
+  -- Vec v -> foldMap getLockKey v
+  Vec v -> do
+    -- TODO: perhaps possible to handle this case more efficiently?
+    let f prev x = do
+          next <- getLockKey x
+          return (prev <> next)
+    F.foldlM f S.empty v
   Tag _ x -> getLockKey x
 getLockKey (O op) = case op of
   Label v ->
@@ -1505,12 +1509,6 @@ getLockKeyC = \case
       (True, False) -> pure $ S.singleton px
       (False, True) -> pure $ S.singleton py
       _ -> pure S.empty
---   Check pred p ->
---     closeable p >>= \case
---       -- NB: Below, we cast the predicate to a `With` pattern.  This is because
---       -- currently the lock only supports patterns, and not conditions.
---       True -> pure $ S.singleton (withP unitP (Check pred p))
---       False -> pure S.empty
   And c1 c2 -> (<>) <$> getLockKeyC c1 <*> getLockKeyC c2
   -- NB: `alt` is not necessary since `getLockVar` doesn't modify the state
   OrC c1 c2 -> getLockKeyC c1 <|> getLockKeyC c2
@@ -1530,7 +1528,7 @@ mkLock p = Lock p <$> getLockKey p
 
 -- | Generate all the locks for the given rule.
 locksFor :: (P.MonadIO m) => DirRule -> P.ListT m Lock
-locksFor rule  =
+locksFor rule =
   P.Select $ _locksFor rule P.yield
 
 

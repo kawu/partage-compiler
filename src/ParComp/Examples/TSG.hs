@@ -15,22 +15,26 @@ import           Prelude hiding
   (splitAt, span, map, or, and, any, const, head)
 import qualified Prelude as P
 
+import           Control.Monad.State.Strict (liftIO)
+
 import           Control.Monad (forM_)
 import qualified Control.Monad as P
 
 import qualified Data.Text as T
+import qualified Data.Text.IO as T
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import           Data.Maybe (fromJust)
 
 import           ParComp.Pattern.Untyped (Fun(..))
+import qualified ParComp.Pattern.Untyped as U
 import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed
   ( Pattern, Patt(..), Cond
   , pair, nothing, just, nil, cons
   , left, right, bimap, guard
   )
-import qualified ParComp.Pattern.Util as U
+import qualified ParComp.Pattern.Util as Util
 
 import           ParComp.Parser (chartParse)
 
@@ -285,7 +289,7 @@ complete gram =
 
     downP = item
       (rule v_A
-        ( bimap U.append
+        ( bimap Util.append
             v_alpha
             (just v_B .: dot .: v_beta)
         )
@@ -366,43 +370,48 @@ cfgBaseItems inp cfgRules =
 --------------------------------------------------
 
 
+tsgRules = S.fromList
+-- [ ("NP_1", ["N_2"])
+-- , ("NP_3", ["DET_4", "N_5"])
+-- -- NB: "NP_28" is an internal node (see below)
+-- , ("S_6", ["NP_28", "VP_8"])
+-- , ("VP_9", ["V_10"])
+-- , ("VP_11", ["V_12", "Adv_13"])
+-- , ("VP_14", ["Adv_15", "V_16"])
+-- , ("VP_17", ["Adv_18", "V_19", "NP_20"])
+-- , ("DET_21", ["a_1"])
+-- , ("DET_22", ["some_2"])
+-- , ("N_23", ["man_3"])
+-- , ("N_24", ["pizza_4"])
+-- , ("V_25", ["eats_5"])
+-- , ("V_26", ["runs_6"])
+-- , ("Adv_27", ["quickly_7"])
+-- , ("NP_28", ["DET_29", "N_30"])
+-- ]
+  [ ("NP_1", ["DET_2", "N_3"])
+  , ("DET_2", ["a_3"])
+  , ("N_4", ["man_5"])
+  ]
+
+
+-- Input sentence
+-- testSent = ["a", "man", "quickly", "eats", "some", "pizza"]
+testSent = ["a", "man"]
+
+
+-- Grammar
+testGram = mkGram testSent tsgRules
+
+
 testTSG :: IO ()
 testTSG = do
-  let cfgRules = S.fromList
-        [ ("NP_1", ["N_2"])
-        , ("NP_3", ["DET_4", "N_5"])
-        -- NB: "NP_28" is an internal node (see below)
-        , ("S_6", ["NP_28", "VP_8"])
-        , ("VP_9", ["V_10"])
-        , ("VP_11", ["V_12", "Adv_13"])
-        , ("VP_14", ["Adv_15", "V_16"])
-        , ("VP_17", ["Adv_18", "V_19", "NP_20"])
-        , ("DET_21", ["a_1"])
-        , ("DET_22", ["some_2"])
-        , ("N_23", ["man_3"])
-        , ("N_24", ["pizza_4"])
-        , ("V_25", ["eats_5"])
-        , ("V_26", ["runs_6"])
-        , ("Adv_27", ["quickly_7"])
-        , ("NP_28", ["DET_29", "N_30"])
-        ]
---         [ ("NP_1", ["DET_2", "N_3"])
---         , ("DET_2", ["a_3"])
---         , ("N_4", ["man_5"])
---         ]
-
-      -- Input sentence
-      sent = ["a", "man", "quickly", "eats", "some", "pizza"]
---       sent = ["a", "man"]
-
-      gram = mkGram sent cfgRules
-      baseItems = cfgBaseItems sent cfgRules
+  let baseItems = cfgBaseItems testSent tsgRules
       ruleMap = M.fromList
-        [ ("CO", complete gram)
-        , ("PR", predict gram)
+        [ ("CO", complete testGram)
+        , ("PR", predict testGram)
         ]
       finalPatt = item any
-        (span (pos 0) (pos $ length sent))
+        (span (pos 0) (pos $ length testSent))
 --   forM_ baseItems print
 --   putStr "roots: " >> print roots
 --   putStr "leafs: " >> print leafs
@@ -410,3 +419,29 @@ testTSG = do
   chartParse baseItems ruleMap finalPatt >>= \case
     Nothing -> putStrLn "# No parse found"
     Just it -> print it 
+
+
+--------------------------------------------------
+-- Tests
+--------------------------------------------------
+
+
+testCompleteDir :: U.DirRule
+testCompleteDir = U.directRule (Ty.compileRule $ complete testGram) !! 0
+
+
+mainTest :: IO ()
+mainTest = do
+  let secondAnte = U.otherAntes testCompleteDir !! 0
+  T.putStr "@@@ Second Ante: "
+  print secondAnte
+  U.runMatchT $ do
+    U.dummyMatch (U.mainAnte testCompleteDir)
+    liftIO $ do
+      T.putStrLn "@@@ Dummy matched"
+    lock <- U.mkLock secondAnte
+    liftIO $ do
+--       T.putStr "@@@ Template: "
+--       print $ U.lockTemplate lock
+      T.putStr "@@@ Key: "
+      print $ U.lockKey lock

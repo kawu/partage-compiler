@@ -167,9 +167,12 @@ applyDirRule
   -> U.MatchT (ChartT m) U.Rigit
 applyDirRule ruleName rule mainItem = do
 --   liftIO $ do
---     T.putStrLn "@@@ Matching"
---     print $ U.mainAnte rule
---     print mainItem
+--     T.putStr "@@@ Matching: "
+--     T.putStrLn ruleName
+-- --     T.putStr "@@@ Other Ante: "
+-- --     print $ U.otherAntes rule !! 0
+--     -- print $ U.mainAnte rule
+--     -- print mainItem
   U.match U.Strict (U.mainAnte rule) mainItem
   case U.otherAntes rule of
     [otherPatt] -> do
@@ -177,16 +180,18 @@ applyDirRule ruleName rule mainItem = do
       let template = U.lockTemplate lock
           key = U.lockKey lock
 --       liftIO $ do
---         T.putStr "@@@ Lock: "
---         print lock
+--         T.putStr "@@@ Template: "
+--         print template
+--         T.putStr "@@@ Key: "
+--         print key
       index <- U.lift $ retrieveIndex template
       let valItemMap = maybe M.empty id $ M.lookup key index
 --       liftIO $ do
 --         T.putStr "@@@ Index: "
 --         print valItemMap
-      keyVal <- U.keyValFor $ U.lockKey lock
+      keyVal <- U.keyValFor key
 --       liftIO $ do
---         T.putStr "@@@ Key: "
+--         T.putStr "@@@ Val: "
 --         print keyVal
       let otherItems = do
             maybe [] S.toList $ M.lookup keyVal valItemMap
@@ -196,7 +201,6 @@ applyDirRule ruleName rule mainItem = do
 --           print otherItem
         U.match U.Strict otherPatt otherItem
 --         liftIO $ do
---           T.putStrLn "@@@ Matched with Other"
 --           T.putStr "@@@ Closing: "
 --           print (U.dirConseq rule)
         result <- U.close (U.dirConseq rule)
