@@ -6,7 +6,8 @@
 
 
 module ParComp.Examples.CFG
-  ( runTestCFG
+  ( runCFG
+  , testCFG
   ) where
 
 
@@ -24,8 +25,8 @@ import           ParComp.Pattern.Typed
   )
 import qualified ParComp.Pattern.Util as Util
 
--- You can alternatively import chartParse from ParComp.SimpleParser
-import           ParComp.Parser (chartParse)
+import qualified ParComp.Parser as P
+import qualified ParComp.SimpleParser as SP
 
 
 -------------------------------------------------------------------------------
@@ -244,8 +245,8 @@ cfgBaseItems inp cfgRules =
 
 
 -- | Test CFG-like grammar (instead of non-terminals, nodes are used)
-testCFG :: S.Set (Node, [Node])
-testCFG = S.fromList $ fmap prepareRule
+testRules :: S.Set (Node, [Node])
+testRules = S.fromList $ fmap prepareRule
   [ ("NP_1", ["N_2"])
   , ("NP_3", ["DET_4", "N_5"])
   , ("S_6", ["NP_7", "VP_8"])
@@ -269,7 +270,7 @@ testCFG = S.fromList $ fmap prepareRule
     prepareNode x = case T.splitOn "_" x of
       [term] -> Right term
       [nonTerm, nodeId] -> Left (nonTerm, nodeId)
-      _ -> error $ "testCFG: unhandled symbol (" ++ T.unpack x ++ ")"
+      _ -> error $ "testRules: unhandled symbol (" ++ T.unpack x ++ ")"
 
 
 -- | Test sentence to parse
@@ -278,9 +279,9 @@ testSent = ["a", "man", "quickly", "eats", "some", "pizza"]
 
 
 -- | Run the parser on the test grammar and sentence.
-runTestCFG :: IO ()
-runTestCFG = do
-  let baseItems = cfgBaseItems testSent testCFG
+runCFG :: Bool -> IO (Maybe Item)
+runCFG simpleParser = do
+  let baseItems = cfgBaseItems testSent testRules
       ruleMap = M.fromList
         [ ("CO", complete)
         , ("PR", predict)
@@ -288,7 +289,15 @@ runTestCFG = do
       zero = pos 0
       slen = pos (length testSent)
       finalPatt = item any (span zero slen)
-  chartParse baseItems ruleMap finalPatt >>= \case
+  if simpleParser
+     then SP.chartParse baseItems ruleMap finalPatt
+     else P.chartParse  baseItems ruleMap finalPatt
+
+
+-- | Run the parser on the test grammar and sentence.
+testCFG :: IO ()
+testCFG = do
+  runCFG False >>= \case
     Nothing -> putStrLn "# No parse found"
     Just it -> print it
 

@@ -7,7 +7,8 @@
 
 
 module ParComp.Examples.TSG
-  ( testTSG
+  ( runTSG
+  , testTSG
   ) where
 
 
@@ -36,7 +37,8 @@ import           ParComp.Pattern.Typed
   )
 import qualified ParComp.Pattern.Util as Util
 
-import           ParComp.Parser (chartParse)
+import qualified ParComp.Parser as P
+import qualified ParComp.SimpleParser as SP
 
 import           Debug.Trace (trace)
 
@@ -370,42 +372,47 @@ cfgBaseItems inp cfgRules =
 --------------------------------------------------
 
 
-tsgRules = S.fromList
--- [ ("NP_1", ["N_2"])
--- , ("NP_3", ["DET_4", "N_5"])
--- -- NB: "NP_28" is an internal node (see below)
--- , ("S_6", ["NP_28", "VP_8"])
--- , ("VP_9", ["V_10"])
--- , ("VP_11", ["V_12", "Adv_13"])
--- , ("VP_14", ["Adv_15", "V_16"])
--- , ("VP_17", ["Adv_18", "V_19", "NP_20"])
--- , ("DET_21", ["a_1"])
--- , ("DET_22", ["some_2"])
--- , ("N_23", ["man_3"])
--- , ("N_24", ["pizza_4"])
--- , ("V_25", ["eats_5"])
--- , ("V_26", ["runs_6"])
--- , ("Adv_27", ["quickly_7"])
--- , ("NP_28", ["DET_29", "N_30"])
--- ]
-  [ ("NP_1", ["DET_2", "N_3"])
-  , ("DET_2", ["a_3"])
-  , ("N_4", ["man_5"])
-  ]
+testRules :: S.Set (T.Text, [T.Text])
+testRules = S.fromList
+   [ ("NP_1", ["N_2"])
+   , ("NP_3", ["DET_4", "N_5"])
+   -- NB: "NP_28" is an internal node (see below)
+   , ("S_6", ["NP_28", "VP_8"])
+   , ("VP_9", ["V_10"])
+   , ("VP_11", ["V_12", "Adv_13"])
+   , ("VP_14", ["Adv_15", "V_16"])
+   , ("VP_17", ["Adv_18", "V_19", "NP_20"])
+   , ("DET_21", ["a_1"])
+   , ("DET_22", ["some_2"])
+   , ("N_23", ["man_3"])
+   , ("N_24", ["pizza_4"])
+   , ("V_25", ["eats_5"])
+   , ("V_26", ["runs_6"])
+   , ("Adv_27", ["quickly_7"])
+   , ("NP_28", ["DET_29", "N_30"])
+   ]
+--   [ ("NP_1", ["DET_2", "N_3"])
+--   , ("DET_2", ["a_3"])
+--   , ("N_4", ["man_5"])
+--   ]
 
 
 -- Input sentence
--- testSent = ["a", "man", "quickly", "eats", "some", "pizza"]
-testSent = ["a", "man"]
+testSent :: [T.Text]
+testSent = ["a", "man", "quickly", "eats", "some", "pizza"]
+-- testSent = ["a", "man"]
 
 
 -- Grammar
-testGram = mkGram testSent tsgRules
+testGram :: Grammar
+testGram = mkGram testSent testRules
 
 
-testTSG :: IO ()
-testTSG = do
-  let baseItems = cfgBaseItems testSent tsgRules
+-- | The argument is used to determine the type of the parser (simple or
+-- regular).
+runTSG :: Bool -> IO (Maybe Item)
+runTSG simpleParser = do
+  let baseItems = cfgBaseItems testSent testRules
       ruleMap = M.fromList
         [ ("CO", complete testGram)
         , ("PR", predict testGram)
@@ -416,7 +423,16 @@ testTSG = do
 --   putStr "roots: " >> print roots
 --   putStr "leafs: " >> print leafs
 --   putStr "internals: " >> print internals
-  chartParse baseItems ruleMap finalPatt >>= \case
+  if simpleParser
+     then SP.chartParse baseItems ruleMap finalPatt
+     else P.chartParse  baseItems ruleMap finalPatt
+
+
+-- | The argument is used to determine the type of the parser (simple or
+-- regular).
+testTSG :: IO ()
+testTSG = do
+  runTSG False >>= \case
     Nothing -> putStrLn "# No parse found"
     Just it -> print it 
 
