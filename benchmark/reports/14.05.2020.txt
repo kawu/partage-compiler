@@ -1,0 +1,37 @@
+partage-compiler> benchmarks
+Running 1 benchmarks...
+Benchmark benchmark-examples: RUNNING...
+benchmarking examples/CFG (simple parser)
+time                 1.156 s    (NaN s .. 1.165 s)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 1.157 s    (1.156 s .. 1.160 s)
+std dev              2.092 ms   (110.6 μs .. 2.538 ms)
+variance introduced by outliers: 19% (moderately inflated)
+
+benchmarking examples/CFG (regular parser)
+time                 32.97 ms   (32.75 ms .. 33.40 ms)
+                     1.000 R²   (0.999 R² .. 1.000 R²)
+mean                 32.90 ms   (32.82 ms .. 33.09 ms)
+std dev              242.5 μs   (114.2 μs .. 406.2 μs)
+
+benchmarking examples/TSG (simple parser)
+time                 495.1 ms   (488.3 ms .. 502.7 ms)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 498.4 ms   (496.1 ms .. 502.6 ms)
+std dev              3.971 ms   (286.0 μs .. 4.954 ms)
+variance introduced by outliers: 19% (moderately inflated)
+
+benchmarking examples/TSG (regular parser)
+time                 37.17 ms   (37.13 ms .. 37.23 ms)
+                     1.000 R²   (1.000 R² .. 1.000 R²)
+mean                 37.07 ms   (36.98 ms .. 37.13 ms)
+std dev              139.2 μs   (81.47 μs .. 221.2 μs)
+
+Benchmark benchmark-examples: FINISH
+
+
+
+NOTE: This benchmark is run on the version of the code in which `isTrue` is
+implemented in terms of `eq` and the `IsTrue` condition expression is not
+available.  This simplifies the implementation, but (as can be seen) also has
+an impact on efficiency.
