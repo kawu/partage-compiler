@@ -1138,6 +1138,8 @@ check Strict = \case
 --     flag <- pbody pred <$> close p
 --     guard flag
   And cx cy -> check Strict cx  >> check Strict cy
+  -- TODO: What if both checks below succeed?  `OrC cx cy` will succeed twice,
+  -- which is not what we want, right?
   OrC cx cy -> check Strict cx <|> check Strict cy
 --   TrueC -> pure ()
   IsTrue p -> do
@@ -1221,6 +1223,9 @@ dummyMatch p = do
 close :: (P.MonadIO m) => Pattern -> MatchT m Rigit
 close p =
 
+  -- TODO: `lookupPatt` is not necessary in case of Strict matching; We should
+  -- account for this!  Current behavior may have significant overhead,
+  -- unnecessary in the strict case.
   lookupPatt p >>= \case
     Just it -> pure it
     Nothing -> byCase p
