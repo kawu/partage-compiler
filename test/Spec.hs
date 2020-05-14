@@ -15,6 +15,7 @@ import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed
   ( Patt (..), match
   , pair, unit, false, true, nil, cons, left, right, nothing, just
+  , isTrue
   )
 import qualified ParComp.Pattern.Util as U
 

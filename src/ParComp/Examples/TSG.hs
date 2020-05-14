@@ -33,7 +33,7 @@ import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed
   ( Pattern, Patt(..), Cond
   , pair, nothing, just, nil, cons
-  , left, right, bimap, guard
+  , left, right, bimap, guard, isTrue
   )
 import qualified ParComp.Pattern.Util as Util
 

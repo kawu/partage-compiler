@@ -320,8 +320,8 @@ data Cond t
   -- ^ Logical disjunction
 --   | TrueC
 --   -- ^ Always True
-  | IsTrue t
-  -- ^ Check if the given Boolean (predicate) pattern is satisfied
+--   | IsTrue t
+--   -- ^ Check if the given Boolean (predicate) pattern is satisfied
   deriving (Show, Eq, Ord)
 
 
@@ -1142,9 +1142,9 @@ check Strict = \case
   -- which is not what we want, right?
   OrC cx cy -> check Strict cx <|> check Strict cy
 --   TrueC -> pure ()
-  IsTrue p -> do
-    x <- close p
-    guard $ x == true I
+--   IsTrue p -> do
+--     x <- close p
+--     guard $ x == true I
 check Lazy = \case
   Eq px py -> do
     cx <- closeable px
@@ -1177,14 +1177,14 @@ check Lazy = \case
   -- result doesn't make sense.
   -- Neg c -> not <$> check Lazy c
 --   TrueC -> pure ()
-  IsTrue px -> do
-    cx <- closeable px
-    case cx of
-      True -> do
-        x <- close px
-        guard $ x == true I
-      False -> do
-        bindPatt px (true I)
+--   IsTrue px -> do
+--     cx <- closeable px
+--     case cx of
+--       True -> do
+--         x <- close px
+--         guard $ x == true I
+--       False -> do
+--         bindPatt px (true I)
 
 
 -- | Dummy pattern matching
@@ -1357,7 +1357,7 @@ closeableC = \case
   -- OrC cx cy -> (&&) <$> closeableC cx <*> closeableC cy
   -- Neg c -> closeableC c
 --   TrueC -> pure True
-  IsTrue p -> closeable p
+--   IsTrue p -> closeable p
 
 
 --------------------------------------------------
@@ -1519,10 +1519,10 @@ getLockKeyC = \case
   OrC c1 c2 -> getLockKeyC c1 <|> getLockKeyC c2
   -- Neg c -> getLockKeyC c
 --   TrueC -> pure S.empty
-  IsTrue p ->
-    closeable p >>= \case
-      True  -> pure $ S.singleton p
-      False -> pure S.empty
+--   IsTrue p ->
+--     closeable p >>= \case
+--       True  -> pure $ S.singleton p
+--       False -> pure S.empty
 
 
 -- | Retrieve the lock of the pattern.  The lock can be used to determine the

@@ -34,6 +34,7 @@ module ParComp.Pattern.Typed
   -- ** Other patterns
   , bimap
   , guard
+  , isTrue
 
   -- * Deduction rule
   , Rule (..)
@@ -120,7 +121,7 @@ class Patt (repr :: * -> *) where
   with    :: repr a -> repr Cond -> repr a
 
   -- | Cast a predicate pattern as a condition
-  isTrue  :: repr Bool -> repr Cond
+  -- isTrue  :: repr Bool -> repr Cond
   eq      :: repr a -> repr a -> repr Cond
   -- andC    :: repr Cond -> repr Cond -> repr Cond
   -- orC     :: repr Cond -> repr Cond -> repr Cond
@@ -180,7 +181,7 @@ instance Patt Pattern where
 --   app (Patt f)              = Patt f
 --   -- expand (Patt f)           = Patt f
 
-  isTrue (Patt x)           = Cond (U.IsTrue x)
+  -- isTrue (Patt x)           = Cond (U.IsTrue x)
   with (Patt x) (Cond y)    = Patt (U.withP x y)
   eq (Patt x) (Patt y)      = Cond (U.Eq x y)
   -- true                      = Cond U.TrueC
@@ -303,6 +304,11 @@ guard p =
     body x = do
       P.guard =<< U.fbody p x
       return x
+
+
+-- | Cast a predicate pattern as a condition.
+isTrue :: (Patt repr) => repr Bool -> repr Cond
+isTrue = eq (const True)
 
 
 --------------------------------------------------
