@@ -329,4 +329,4 @@ splitAtDot =
 
 -- | Match any suffix that satisfies the given suffix pattern.
 suffix :: (Patt repr) => repr [a] -> repr [a]
-suffix p = fix $ or p (any .: rec)
+suffix p = fix $ choice p (any .: rec)

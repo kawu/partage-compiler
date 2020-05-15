@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 
-import           Prelude hiding (any, const, and, or)
+import           Prelude hiding (any, const, and, or, seq)
 
 import           Test.Tasty
 import           Test.Tasty.SmallCheck as SC
@@ -65,7 +65,7 @@ patternUnitTests = testGroup "(patterns)"
   -- Check if we can still match the original item after applying via
   , testCase "via ... `and` ..." $ do
       let f = letIn any (const ())
-          p = via f any `and` pair (const 1) (const 2)
+          p = via f any `seq` pair (const 1) (const 2)
           x = (1 :: Int, 2 :: Int)
       match p x @?= True
 

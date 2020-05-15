@@ -17,7 +17,7 @@ module ParComp.Pattern.Util.Native
 
 
 import           Prelude hiding
-  (map, or, and, any, splitAt)
+  (map, or, and, any, seq, splitAt)
 
 import qualified ParComp.Pattern.Untyped as U
 import           ParComp.Pattern.Untyped (IsItem(..), Fun(..))
@@ -46,7 +46,7 @@ identity = letIn (local "x") (local "x")
 -- | Append the first list at the end of the second list.
 appendEnd :: (Patt repr) => repr [a] -> repr ([a] -> [a])
 appendEnd ys =
-  fix $ p1 `or` p2
+  fix $ p1 `choice` p2
   where
     p1 = letIn nil ys
     p2 = letIn
@@ -69,10 +69,10 @@ append xs ys = map (appendEnd ys) xs
 --
 splitAt :: forall repr a. (Patt repr) => repr a -> repr ([a] -> ([a], [a]))
 splitAt p =
-  fix $ p1 `or` p2
+  fix $ p1 `choice` p2
   where
     p1 = letIn
-      ((p `cons` any) `and` local "suff")
+      ((p `cons` any) `seq` local "suff")
       (pair nil (local "suff"))
     p2 = letIn
       (local "x" `cons` via

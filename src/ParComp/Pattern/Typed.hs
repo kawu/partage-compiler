@@ -99,11 +99,11 @@ class Patt (repr :: * -> *) where
   const   :: (IsItem a) => a -> repr a
 
   ------------------------------------------
-  -- Logical patterns
+  -- Control patterns
   ------------------------------------------
 
-  and     :: repr a -> repr a -> repr a
-  or      :: repr a -> repr a -> repr a
+  seq     :: repr a -> repr a -> repr a
+  choice  :: repr a -> repr a -> repr a
 
   ------------------------------------------
   -- Functional patterns
@@ -127,6 +127,9 @@ class Patt (repr :: * -> *) where
   -- orC     :: repr Cond -> repr Cond -> repr Cond
   -- true    :: repr Cond
   -- check   :: (IsItem a) => U.Pred a -> repr a -> repr Cond
+  and     :: repr Cond -> repr Cond -> repr Cond
+  or      :: repr Cond -> repr Cond -> repr Cond
+
 
   ------------------------------------------
   -- Defining functions
@@ -155,11 +158,13 @@ instance Patt Pattern where
   var v                     = Patt (U.labelP $ U.Var v)
   const x                   = Patt (U.encodeP x)
 
-  and (Patt x) (Patt y)     = Patt (U.viaP x y)
-  and (Cond x) (Cond y)     = Cond (U.And x y)
+  seq (Patt x) (Patt y)     = Patt (U.seqP x y)
+  choice (Patt x) (Patt y)  = Patt (U.choiceP x y)
 
-  or  (Patt x) (Patt y)     = Patt (U.orP x y)
-  or  (Cond x) (Cond y)     = Cond (U.OrC x y)
+  -- and (Patt x) (Patt y)     = Patt (U.viaP x y)
+  -- or  (Patt x) (Patt y)     = Patt (U.choiceP x y)
+  and (Cond x) (Cond y)     = Cond (U.And x y)
+  or  (Cond x) (Cond y)     = Cond (U.Or x y)
 
   fun f                     = FunP (encodeFun f)
   app (FunP f)              = Patt (U.appP f)

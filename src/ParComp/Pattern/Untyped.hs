@@ -51,7 +51,8 @@ module ParComp.Pattern.Untyped
 --   , leftP
 --   , rightP
 
-  , orP
+  , seqP
+  , choiceP
   , viaP
   , appP
   , mapP
@@ -266,15 +267,18 @@ unLVar (LVar x) = x
 
 -- | Pattern operation expression
 data Op t
-  = Or t t
-  -- ^ Or (disjunction): match items which match either of the two patterns.
-  -- `Or` provides non-determinism in pattern matching.
+  = Choice t t
+  -- ^ Choice: match items which match either of the two patterns.  `Choice`
+  -- provides non-determinism in pattern matching.
+  | Seq t t
+  -- ^ Sequence: `Seq x y` first matches `x`, then `y`, with the item.  The
+  -- result of the match with `y` is taken to be the result of the entire
+  -- expression.
   | Via t t
   -- ^ Via: `Via p x` should be understood as matching `x` with the underlying
   -- item via `p`:
   -- * `p` is first matched with the underlying item
   -- * `x` is then matched with the result
-  -- `Via` can be seen as conjunction.
   | Label Var
   -- ^ Label: match any item expression and bind it to the given variable
   | Local LVar
@@ -316,7 +320,7 @@ data Cond t
 --   -- ^ Check if the given predicate is satisfied
   | And (Cond t) (Cond t)
   -- ^ Logical conjunction
-  | OrC (Cond t) (Cond t)
+  | Or (Cond t) (Cond t)
   -- ^ Logical disjunction
 --   | TrueC
 --   -- ^ Always True
@@ -346,7 +350,8 @@ symP x      = P $ Sym x
 -- rightP y    = P . Union $ Right y
 
 viaP x y    = O $ Via x y
-orP x y     = O $ Or x y
+seqP x y    = O $ Seq x y
+choiceP x y = O $ Choice x y
 appP f      = O $ App f
 mapP f x    = O $ Map f x
 map'P f x   = O $ Map' f x
@@ -592,12 +597,13 @@ globalVarsIn (P ip) = case ip of
   Tag _ x -> globalVarsIn x
   _ -> S.empty
 globalVarsIn (O op) = case op of
-  Or x y -> globalVarsIn x <> globalVarsIn y
+  Choice x y -> globalVarsIn x <> globalVarsIn y
 --     let xs = globalVarsIn x
 --         ys = globalVarsIn y
 --      in if xs == ys
 --            then xs
 --            else error "globalVarsIn: different sets of variables in Or"
+  Seq x y -> globalVarsIn x <> globalVarsIn y
   Via x y -> globalVarsIn x <> globalVarsIn y
   Label v -> S.singleton v
   Local _ -> error "globalVarsIn: encountered local variable!"
@@ -1063,13 +1069,16 @@ match ms (O op) it =
       each $ fbody f it
     -- NOTE: This could be alternatively called "Choice" operator (from
     -- "non-deterministic choice operator")
-    (Or p1 p2, it) -> do
+    (Choice p1 p2, it) -> do
       -- NOTE: We retrieve and then restore the entire state, even though the
       -- fixed recursive pattern should never escape its syntactic scope so, in
       -- theory, it should not change between the first and the second branch
       -- of the `Or` pattern.  The same applies to local variables.  Perhaps
       -- this is something we could check dynamically, just in case?
       match ms p1 it `alt` match ms p2 it
+    (Seq x y, it) -> do
+      match ms x it
+      match ms y it
     (Via p x, it) -> do
       -- NOTE: We return `it` at the end rather than the result of either of
       -- the two matches.  This matches nicely with how the types of the @via@
@@ -1084,7 +1093,7 @@ match ms (O op) it =
       check ms c
       return it
     (Let x e y, it) -> do
-      mark <- (`mod` 1000) <$> P.liftIO (R.randomIO :: IO Int)
+--       mark <- (`mod` 1000) <$> P.liftIO (R.randomIO :: IO Int)
 --       RWS.gets (getL lenv) >>= \lvs -> P.liftIO $ do
 --         putStr "!!! Let0 #" >> print mark
 --         putStr "lvs : " >> print lvs
@@ -1138,9 +1147,9 @@ check Strict = \case
 --     flag <- pbody pred <$> close p
 --     guard flag
   And cx cy -> check Strict cx  >> check Strict cy
-  -- TODO: What if both checks below succeed?  `OrC cx cy` will succeed twice,
+  -- TODO: What if both checks below succeed?  `Or cx cy` will succeed twice,
   -- which is not what we want, right?
-  OrC cx cy -> check Strict cx <|> check Strict cy
+  Or cx cy -> check Strict cx <|> check Strict cy
 --   TrueC -> pure ()
 --   IsTrue p -> do
 --     x <- close p
@@ -1170,7 +1179,7 @@ check Lazy = \case
   And cx cy -> check Lazy cx >> check Lazy cy
   -- NB: Below, `alt` is necessary since `check` can modify the state in case
   -- of lazy evaluation
-  OrC cx cy -> check Lazy cx `alt` check Lazy cy
+  Or cx cy -> check Lazy cx `alt` check Lazy cy
   -- NB: The line below (commented out) is probably incorrect. In case of Lazy
   -- matching, some embedded check may succeed simply because we cannot
   -- determine its status yet (see (*) above).  Hence, negating the embedded
@@ -1275,14 +1284,16 @@ close p =
         it <- close p
         match Strict f it
       App fname -> error "close App"
-      Or p1 p2 ->
+      Choice p1 p2 ->
         -- NB: `alt` is not necessary, because `close` doesn't modify the state
         close p1 <|> close p2
+      Seq p1 p2 -> 
+        close p1 >>  close p2
       With p c -> do
         it <- close p
         check Strict c
         return it
-      -- Not sure what to do with the two patterns below.  The intuitive
+      -- Not sure what to do with the patterns below.  The intuitive
       -- implementations are commented out below, but they would not
       -- necessarily provide the desired behavior.  I guess we need some good
       -- examples showing what to do with those cases (if anything).
@@ -1330,7 +1341,7 @@ closeable (O op) = case op of
   Map _ p -> closeable p
   Map' f p -> (&&) <$> closeable f <*> closeable p
   App _ -> pure False
-  Or p1 p2 -> do
+  Choice p1 p2 -> do
     c1 <- closeable p1
     c2 <- closeable p2
     -- NB: The notion of being `closeable` relies on the status of global
@@ -1339,6 +1350,7 @@ closeable (O op) = case op of
     if c1 == c2
        then return c1
        else error "closeable Or: different results for different branches"
+  Seq p1 p2 -> (&&) <$> closeable p1 <*> closeable p2
   With p c -> (&&) <$> closeable p <*> closeableC c
   Let x e y -> closeable e
   Via _ _ -> error "closeable Via"
@@ -1353,8 +1365,8 @@ closeableC = \case
 --   Check _ p -> closeable p
   And cx cy -> (&&) <$> closeableC cx <*> closeableC cy
   -- TODO: what about the case below?
-  OrC cx cy -> undefined
-  -- OrC cx cy -> (&&) <$> closeableC cx <*> closeableC cy
+  Or cx cy -> undefined
+  -- Or cx cy -> (&&) <$> closeableC cx <*> closeableC cy
   -- Neg c -> closeableC c
 --   TrueC -> pure True
 --   IsTrue p -> closeable p
@@ -1487,7 +1499,7 @@ getLockKey (O op) = case op of
           pure S.empty
       False -> pure S.empty
   App _ -> pure S.empty
-  Or x y -> do
+  Choice x y -> do
     -- NB: Since we assume that both @x@ and @y@ contain the same global
     -- variables (see `globalVarsIn`), @getLockKey x@ and @getLockKey y@
     -- should yield the same result.
@@ -1496,9 +1508,11 @@ getLockKey (O op) = case op of
     if s1 == s2
        then return s1
        else error "getLockKey Or: different results for different branches"
-  -- Below, ignore `x` and `y`, which should contain local variables only
+  Seq x y -> (<>) <$> getLockKey x <*> getLockKey y
+  -- TODO: Below, do we need to retrieve lock keys from `p`?
   Via p x -> (<>) <$> getLockKey p <*> getLockKey x
   With p c -> (<>) <$> getLockKey p <*> getLockKeyC c
+  -- Below, ignore `x` and `y`, which should contain local variables only
   Let x e y -> getLockKey e
   Fix p -> getLockKey p
   Rec -> pure S.empty
@@ -1516,7 +1530,7 @@ getLockKeyC = \case
       _ -> pure S.empty
   And c1 c2 -> (<>) <$> getLockKeyC c1 <*> getLockKeyC c2
   -- NB: `alt` is not necessary since `getLockVar` doesn't modify the state
-  OrC c1 c2 -> getLockKeyC c1 <|> getLockKeyC c2
+  Or c1 c2 -> getLockKeyC c1 <|> getLockKeyC c2
   -- Neg c -> getLockKeyC c
 --   TrueC -> pure S.empty
 --   IsTrue p ->

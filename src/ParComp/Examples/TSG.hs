@@ -13,7 +13,7 @@ module ParComp.Examples.TSG
 
 
 import           Prelude hiding
-  (splitAt, span, map, or, and, any, const, head)
+  (splitAt, span, map, or, and, seq, any, const, head)
 import qualified Prelude as P
 
 import           Control.Monad.State.Strict (liftIO)
@@ -322,7 +322,7 @@ predict gram =
       )
       (span v_i v_j)
 
-    rightP = top $ rule v_C any `and` v_rule
+    rightP = top $ rule v_C any `seq` v_rule
 
     condP = or
       ( and
