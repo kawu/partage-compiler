@@ -13,7 +13,7 @@
 module ParComp.Pattern.Typed
   ( Pattern (..)
   , Patt (..)
-  , Cond
+  -- , Cond
 
   -- * Matching
   , match
@@ -34,7 +34,7 @@ module ParComp.Pattern.Typed
   -- ** Other patterns
   , bimap
   , guard
-  , isTrue
+  -- , isTrue
 
   -- * Deduction rule
   , Rule (..)
@@ -74,8 +74,8 @@ data Pattern a
   deriving (Show, Eq, Ord)
 
 
--- | Condition marker
-data Cond
+-- -- | Condition marker
+-- data Cond
 
 
 -- | Tagless-final encoding of typed patterns.
@@ -118,17 +118,13 @@ class Patt (repr :: * -> *) where
   -- Condition patterns
   ------------------------------------------
 
-  with    :: repr a -> repr Cond -> repr a
+  with    :: repr a -> repr Bool -> repr a
 
   -- | Cast a predicate pattern as a condition
   -- isTrue  :: repr Bool -> repr Cond
-  eq      :: repr a -> repr a -> repr Cond
-  -- andC    :: repr Cond -> repr Cond -> repr Cond
-  -- orC     :: repr Cond -> repr Cond -> repr Cond
-  -- true    :: repr Cond
-  -- check   :: (IsItem a) => U.Pred a -> repr a -> repr Cond
-  and     :: repr Cond -> repr Cond -> repr Cond
-  or      :: repr Cond -> repr Cond -> repr Cond
+  eq      :: repr a -> repr a -> repr Bool
+  and     :: repr Bool -> repr Bool -> repr Bool
+  or      :: repr Bool -> repr Bool -> repr Bool
 
 
   ------------------------------------------
@@ -160,11 +156,8 @@ instance Patt Pattern where
 
   seq (Patt x) (Patt y)     = Patt (U.seqP x y)
   choice (Patt x) (Patt y)  = Patt (U.choiceP x y)
-
   -- and (Patt x) (Patt y)     = Patt (U.viaP x y)
   -- or  (Patt x) (Patt y)     = Patt (U.choiceP x y)
-  and (Cond x) (Cond y)     = Cond (U.And x y)
-  or  (Cond x) (Cond y)     = Cond (U.Or x y)
 
   fun f                     = FunP (encodeFun f)
   app (FunP f)              = Patt (U.appP f)
@@ -176,27 +169,29 @@ instance Patt Pattern where
   -- NEW 05.04.2020 (TODO: make sure this is correct)
   via (FunP f) (Patt x)     = Patt (U.viaP (U.appP f) x)
 
---   app (Patt f)              = Patt f
-
---   fun f                     = Patt . U.appP $ encodeFun f
---   map f (Patt p)            = Patt $ U.mapP (encodeFun f) p
---   via (Patt f) (Patt x)     = Patt $ U.viaP f x
---   -- via f (Patt x)            = Patt $ U.viaP (U.appP (encodeFun f)) x
--- 
---   app (Patt f)              = Patt f
---   -- expand (Patt f)           = Patt f
+  with (Patt x) y           = Patt (U.withP x (asCond y))
+  eq (Patt x) (Patt y)      = Cond (U.Eq x y)
+  and x y                   = Cond (U.And (asCond x) (asCond y))
+  or  x y                   = Cond (U.Or  (asCond x) (asCond y))
 
   -- isTrue (Patt x)           = Cond (U.IsTrue x)
-  with (Patt x) (Cond y)    = Patt (U.withP x y)
-  eq (Patt x) (Patt y)      = Cond (U.Eq x y)
-  -- true                      = Cond U.TrueC
-  -- check p (Patt x)          = Cond (U.Check (encodePred p) x)
+--   with (Patt x) (Cond y)    = Patt (U.withP x y)
+--   eq (Patt x) (Patt y)      = Cond (U.Eq x y)
+--   and (Cond x) (Cond y)     = Cond (U.And x y)
+--   or  (Cond x) (Cond y)     = Cond (U.Or x y)
 
   letIn (Patt x) (Patt y)   = Patt (U.letP x U.anyP y)
 
   local v                   = Patt (U.localP $ U.LVar v)
   fix (Patt x)              = Patt (U.fixP x)
   rec                       = Patt (U.recP)
+
+
+-- | Cast a Boolean pattern as a condition.
+asCond :: Pattern Bool -> U.Cond U.Pattern
+asCond (Cond c) = c
+asCond (Patt x) = U.Eq x (U.true U.P)
+asCond _ = error "asCond: cannot handle pattern"
 
 
 -- | Encode function as a function on untyped items.
@@ -311,9 +306,9 @@ guard p =
       return x
 
 
--- | Cast a predicate pattern as a condition.
-isTrue :: (Patt repr) => repr Bool -> repr Cond
-isTrue = eq (const True)
+-- -- | Cast a predicate pattern as a condition.
+-- isTrue :: (Patt repr) => repr Bool -> repr Cond
+-- isTrue = eq (const True)
 
 
 --------------------------------------------------
@@ -325,7 +320,7 @@ isTrue = eq (const True)
 data Rule a = Rule
   { antecedents :: [Pattern a]
   , consequent  :: Pattern a
-  , condition   :: Pattern Cond
+  , condition   :: Pattern Bool
   }
 
 

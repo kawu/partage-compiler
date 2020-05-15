@@ -31,9 +31,9 @@ import           ParComp.Pattern.Untyped (Fun(..))
 import qualified ParComp.Pattern.Untyped as U
 import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed
-  ( Pattern, Patt(..), Cond
+  ( Pattern, Patt(..)
   , pair, nothing, just, nil, cons
-  , left, right, bimap, guard, isTrue
+  , left, right, bimap, guard
   )
 import qualified ParComp.Pattern.Util as Util
 
@@ -212,27 +212,27 @@ nodeLabel x = case T.splitOn "_" x of
 
 
 -- | Leaf node predicate
-leaf :: Grammar -> Pattern Node -> Pattern Cond
+leaf :: Grammar -> Pattern Node -> Pattern Bool
 -- leaf gram = check $ Pred "leaf" $ \x -> x `S.member` leafs gram
 leaf gram =
   let namedFun = Fun "leaf" $ \x -> pure (x `S.member` leafs gram)
-   in isTrue . map (fun namedFun)
+   in map (fun namedFun)
 
 
 -- | Root node predicate
-root :: Grammar -> Pattern Node -> Pattern Cond
+root :: Grammar -> Pattern Node -> Pattern Bool
 -- root gram = check $ Pred "root" $ \x -> x `S.member` roots gram
 root gram =
   let namedFun = Fun "root" $ \x -> pure (x `S.member` roots gram)
-   in isTrue . map (fun namedFun)
+   in map (fun namedFun)
 
 
 -- | Internal node predicate
-internal :: Grammar -> Pattern Node -> Pattern Cond
+internal :: Grammar -> Pattern Node -> Pattern Bool
 -- internal gram = check $ Pred "internal" $ \x -> x `S.member` inter gram
 internal gram =
   let namedFun = Fun "internal" $ \x -> pure (x `S.member` inter gram)
-   in isTrue . map (fun namedFun)
+   in map (fun namedFun)
 
 
 --------------------------------------------------

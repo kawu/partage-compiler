@@ -66,6 +66,10 @@ module ParComp.Pattern.Untyped
   , fixP
   , recP
 
+  -- ** Booleans (provisional?)
+  , true
+  , false
+
   -- * Matching
   , MatchT
   , MatchingStrategy (..)

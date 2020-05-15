@@ -15,7 +15,6 @@ import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed
   ( Patt (..), match
   , pair, unit, false, true, nil, cons, left, right, nothing, just
-  , isTrue
   )
 import qualified ParComp.Pattern.Util as U
 
@@ -71,14 +70,14 @@ patternUnitTests = testGroup "(patterns)"
 
   -- Check if we can interpret Boolean functions as conditions
   , testCase "const True" $ do
-      match (any `with` isTrue (const True)) () @?= True
+      match (any `with` const True) () @?= True
   , testCase "const False" $ do
-      match (any `with` isTrue (const False)) () @?= False
+      match (any `with` const False) () @?= False
   , testCase "const False `and` const True" $ do
-      let c = isTrue (const False) `and` isTrue (const True)
+      let c = const False `and` const True
       match (any `with` c) () @?= False
   , testCase "const False `or` const True" $ do
-      let c = isTrue (const False) `or` isTrue (const True)
+      let c = const False `or` const True
       match (any `with` c) () @?= True
 
 --   -- Check if we can interpret conditions as Boolean functions
