@@ -54,7 +54,10 @@ qcProps = testGroup "(checked by QuickCheck)"
 --         (n :: Integer) >= 3 QC.==> x^n + y^n /= (z^n :: Integer)
   ]
 
-unitTests = testGroup "Unit tests" [patternUnitTests, otherUnitTests]
+unitTests = testGroup "Unit tests"
+  [ patternUnitTests
+  , otherUnitTests
+  ]
 
 
 patternUnitTests = testGroup "(patterns)"

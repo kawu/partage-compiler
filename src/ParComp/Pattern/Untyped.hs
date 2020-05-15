@@ -1297,6 +1297,7 @@ close p =
         it <- close p
         check Strict c
         return it
+      Let x e y -> error "close Let"
       -- Not sure what to do with the patterns below.  The intuitive
       -- implementations are commented out below, but they would not
       -- necessarily provide the desired behavior.  I guess we need some good
