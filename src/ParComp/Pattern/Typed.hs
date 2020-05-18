@@ -17,6 +17,7 @@ module ParComp.Pattern.Typed
 
   -- * Matching
   , match
+  , match'
   , apply
 
   -- * Non-core patterns
@@ -346,6 +347,22 @@ match (Patt p) x = unsafePerformIO $ U.isMatch p (U.encodeI x)
 match (FunP _) _ = error "cannot match function"
 match (Cond _) _ = error "cannot match condition"
 match (Vect _) _ = error "cannot match vector (forgot to use `build`?)"
+
+
+-- | Match a pattern with an item.
+--
+-- Warning: the function (provisionally) relies on `unsafePerformIO`.
+match' :: (IsItem a) => Pattern a -> a -> [a]
+match' patt x = unsafePerformIO $ case patt of
+  Patt p -> decodeAll $ U.doMatch p (U.encodeI x)
+  FunP f -> error "cannot match condition"
+  Cond _ -> error "cannot match condition"
+  Vect _ -> error "cannot match vector (forgot to use `build`?)"
+  where
+    decodeAll
+      = fmap (P.map U.decodeI)
+      . Pi.toListM
+      . Pi.enumerate
 
 
 -- | Apply functional pattern to a value.

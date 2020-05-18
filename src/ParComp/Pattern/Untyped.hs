@@ -75,6 +75,8 @@ module ParComp.Pattern.Untyped
   , MatchingStrategy (..)
   , isMatch
   , doMatch
+  , toListM
+  , toListT
   , lift
   , forEach
   , runMatchT
@@ -95,6 +97,7 @@ module ParComp.Pattern.Untyped
   , Lock (..)
   , KeyVal
   , mkLock
+  , getLockKey
   , keyValFor
   , locksFor
 
@@ -919,8 +922,32 @@ fixed = do
 
 
 --------------------------------------------------
--- High-level pattern matching
+-- High-level interface
 --------------------------------------------------
+
+
+-- | Convert `MatchT` to a regular list (non-idiomatic use).
+toListM :: (P.MonadIO m) => MatchT (P.Producer a m) a -> m [a]
+toListM = P.toListM . P.enumerate . toListT
+
+
+-- | Convert `MatchT` to `P.ListT.
+toListT :: (P.MonadIO m) => MatchT (P.Producer a m) a -> P.ListT m a
+toListT m = do
+  P.Select $
+    _toListT m P.yield
+
+
+-- | Lower-level handler-based `toListT`.
+_toListT
+  :: (P.MonadIO m)
+  => MatchT m a
+  -> (a -> m ()) -- ^ Monadic handler
+  -> m ()
+_toListT m h =
+  runMatchT $ do
+    x <- m
+    lift $ h x
 
 
 -- | Check if the pattern matches with the given item.
@@ -943,7 +970,6 @@ _doMatch
   :: (P.MonadIO m)
   => Pattern
   -> Rigit
-  -- -> (Env Var -> m ()) -- ^ Monadic handler
   -> (Rigit -> m ()) -- ^ Monadic handler
   -> m ()
 _doMatch p x h =

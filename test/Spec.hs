@@ -8,15 +8,17 @@ import           Test.Tasty.SmallCheck as SC
 import           Test.Tasty.QuickCheck as QC
 import           Test.Tasty.HUnit
 
+import qualified Data.Set as S
 import           Data.List (sort)
 import           Data.Ord
 
+import qualified ParComp.Pattern.Untyped as Un
 import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed
-  ( Patt (..), match
+  ( Patt (..), match, match'
   , pair, unit, false, true, nil, cons, left, right, nothing, just
   )
-import qualified ParComp.Pattern.Util as U
+import qualified ParComp.Pattern.Util as Util
 
 
 main :: IO ()
@@ -43,7 +45,7 @@ scProps = testGroup "(checked by SmallCheck)"
 
 qcProps = testGroup "(checked by QuickCheck)"
   [ QC.testProperty "Util.append (xs, ys) == xs ++ ys" $
-      \xs ys -> Ty.apply U.append (xs :: [Int], ys) == [xs ++ ys]
+      \xs ys -> Ty.apply Util.append (xs :: [Int], ys) == [xs ++ ys]
   , QC.testProperty "sort == sort . reverse" $
       \list -> sort (list :: [Int]) == sort (reverse list)
   , QC.testProperty "Fermat's little theorem" $
@@ -56,13 +58,14 @@ qcProps = testGroup "(checked by QuickCheck)"
 
 unitTests = testGroup "Unit tests"
   [ patternUnitTests
+  , indexUnitTests
   , otherUnitTests
   ]
 
 
 patternUnitTests = testGroup "(patterns)"
   [ testCase "Util.append" $ do
-      Ty.apply U.append ([1, 2], [3]) @?= [[1, 2, 3 :: Int]]
+      Ty.apply Util.append ([1, 2], [3]) @?= [[1, 2, 3 :: Int]]
 
   -- Check if we can still match the original item after applying via
   , testCase "via ... `and` ..." $ do
@@ -128,6 +131,36 @@ patternUnitTests = testGroup "(patterns)"
 --   -- Check if illegal patterns can be used as conditions (e.g. local, var, any)
 --   , testCase "illegal patterns as conditions" $ do
 --       match (any `with` any) True @?= True
+
+  -- Check match'
+  , testCase "match' unit ()" $ do
+      match' unit () @?= [()]
+  , testCase "match' false False" $ do
+      match' false False @?= [False]
+  , testCase "match' false True" $ do
+      match' false True @?= []
+  , testCase "const True `or` const True" $ do
+      let c = const True `or` const True
+      match' (any `with` c) () @?= [()]
+  ]
+
+
+indexUnitTests = testGroup "(indexing)"
+  [ testCase "with nothing" $ do
+      let main = pair (var "i") (var "j")
+          other = pair (var "j") (var "k")
+      keys <- Un.toListM $ do
+        Un.dummyMatch (Ty.unPatt main)
+        Un.getLockKey (Ty.unPatt other)
+      keys @?= [S.singleton . Un.labelP $ Un.Var "j"]
+  , testCase "with const True `or` const True" $ do
+      let main = pair (var "i") (var "j")
+          cond = const True `or` const True
+          other = pair (var "j") (var "k") `with` cond
+      keys <- Un.toListM $ do
+        Un.dummyMatch (Ty.unPatt main)
+        Un.getLockKey (Ty.unPatt other)
+      keys @?= [S.singleton . Un.labelP $ Un.Var "j"]
   ]
 
 
