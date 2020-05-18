@@ -139,7 +139,7 @@ patternUnitTests = testGroup "(patterns)"
       match' false False @?= [False]
   , testCase "match' false True" $ do
       match' false True @?= []
-  , testCase "const True `or` const True" $ do
+  , testCase "with const True `or` const True" $ do
       let c = const True `or` const True
       match' (any `with` c) () @?= [()]
   ]
@@ -147,15 +147,15 @@ patternUnitTests = testGroup "(patterns)"
 
 indexUnitTests = testGroup "(indexing)"
   [ testCase "with nothing" $ do
-      let main = pair (var "i") (var "j")
+      let main  = pair (var "i") (var "j")
           other = pair (var "j") (var "k")
       keys <- Un.toListM $ do
         Un.dummyMatch (Ty.unPatt main)
         Un.getLockKey (Ty.unPatt other)
       keys @?= [S.singleton . Un.labelP $ Un.Var "j"]
   , testCase "with const True `or` const True" $ do
-      let main = pair (var "i") (var "j")
-          cond = const True `or` const True
+      let main  = pair (var "i") (var "j")
+          cond  = const True `or` const True
           other = pair (var "j") (var "k") `with` cond
       keys <- Un.toListM $ do
         Un.dummyMatch (Ty.unPatt main)

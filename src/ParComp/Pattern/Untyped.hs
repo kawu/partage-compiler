@@ -9,6 +9,9 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DerivingStrategies #-}
 
+-- {-# LANGUAGE ScopedTypeVariables #-}
+-- {-# LANGUAGE PartialTypeSignatures #-}
+
 -- {-# LANGUAGE QuantifiedConstraints #-}
 
 
@@ -82,7 +85,8 @@ module ParComp.Pattern.Untyped
   , runMatchT
   , match
   , close
-  , check
+  , checkStrict
+  -- , checkLazy
 
   -- * Rule
   , Rule (..)
@@ -958,7 +962,10 @@ isMatch p x =
 
 -- | Perform pattern matching and generate the list of possible global variable
 -- binding environments which satisfy the match.
--- doMatch :: (P.MonadIO m) => Pattern -> Rigit -> P.ListT m (Env Var)
+--
+-- TODO: This looks like a specialized version of toListT.  Should be
+-- implemented in terms of it?
+--
 doMatch :: (P.MonadIO m) => Pattern -> Rigit -> P.ListT m Rigit
 doMatch p x = do
   P.Select $
@@ -1120,7 +1127,9 @@ match ms (O op) it =
       return it
     (With p c, it) -> do
       match ms p it
-      check ms c
+      case ms of
+        Strict -> checkStrict c
+        Lazy   -> checkLazy c
       return it
     (Let x e y, it) -> do
 --       mark <- (`mod` 1000) <$> P.liftIO (R.randomIO :: IO Int)
@@ -1159,32 +1168,54 @@ match ms (O op) it =
       match ms p it
 
 
--- | Check the side condition expression.
---
--- The `check` function does not modify the underlying state in case of
--- `Strict` matching.  In case of `Lazy` matching, `check` may update the
--- pattern binding envitonment (with `bindPatt`).
-check :: (P.MonadIO m) => MatchingStrategy -> Cond Pattern -> MatchT m ()
-check Strict = \case
+-- | Check the side condition expression.  A strict version, which does not
+-- modify the underlying state.
+checkStrict :: (P.MonadIO m) => Cond Pattern -> MatchT m ()
+checkStrict = \case
   Eq px py  -> do
     x <- close px
     y <- close py
     guard $ x == y
--- --   Pred pname p -> do
--- --     flag <- retrievePred pname <*> close p
--- --     guard flag
---   Check pred p -> do
---     flag <- pbody pred <$> close p
---     guard flag
-  And cx cy -> check Strict cx  >> check Strict cy
-  -- TODO: What if both checks below succeed?  `Or cx cy` will succeed twice,
-  -- which is not what we want, right?
-  Or cx cy -> check Strict cx <|> check Strict cy
---   TrueC -> pure ()
---   IsTrue p -> do
---     x <- close p
---     guard $ x == true I
-check Lazy = \case
+  And cx cy -> checkStrict cx >> checkStrict cy
+  Or cx cy -> do
+    -- This is somewhat low-level, but serves the purpose
+    let cxProd = P.enumerate (checkStrict cx)
+    P.lift (P.head cxProd) >>= \case
+      Nothing -> checkStrict cy
+      Just () -> return ()
+  -- NB: The implementation below (commented out) may perform redundant checks
+  -- Or cx cy -> checkStrict cx <|> checkStrict cy
+
+
+-- -- | Check the side condition expression.  A strict version, which does not
+-- -- modify the underlying state.
+-- checkStrict :: (P.MonadIO m) => Cond Pattern -> MatchT m Bool
+-- checkStrict = \case
+--   Eq px py  -> do
+--     x <- close px
+--     y <- close py
+--     return $ x == y
+--   And cx cy -> do
+--     -- (&&) <$> checkStrict cx <*> checkStrict cy
+--     fx <- checkStrict cx
+--     if fx
+--        then checkStrict cy
+--        else return False
+--   Or cx cy -> do
+--     fx <- checkStrict cx
+--     if fx
+--        then return True
+--        else checkStrict cy
+-- --   TrueC -> pure ()
+-- --   IsTrue p -> do
+-- --     x <- close p
+-- --     guard $ x == true I
+
+
+-- | Check the side condition expression.  A lazy version, which may update the
+-- pattern binding environment (with `bindPatt`).
+checkLazy :: (P.MonadIO m) => Cond Pattern -> MatchT m ()
+checkLazy = \case
   Eq px py -> do
     cx <- closeable px
     cy <- closeable py
@@ -1193,28 +1224,22 @@ check Lazy = \case
         x <- close px
         y <- close py
         guard $ x == y
-      (True, False) -> bindPatt py =<< close px
-      (False, True) -> bindPatt px =<< close py
-      (False, False) -> error "check Lazy: both patterns not closeable"
---   Check pred p -> do
---     -- pred <- retrievePred pname
---     closeable p >>= \case
---       True  -> do
---         flag <- pbody pred <$> close p
---         guard flag
---       False -> do
---         -- NB: We bind the pattern (see also `getLockKeyC`) with the unit
---         -- value to indicate that the value of the condition is True.
---         bindPatt (withP unitP (Check pred p)) unit
-  And cx cy -> check Lazy cx >> check Lazy cy
-  -- NB: Below, `alt` is necessary since `check` can modify the state in case
-  -- of lazy evaluation
-  Or cx cy -> check Lazy cx `alt` check Lazy cy
+      (True, False) -> do
+        -- TODO: bindPatt may fail!  Is that what we want?  Probably not, since
+        -- we want to return FuzzyBool instead of (silently) failing.
+        -- UPDATE: not sure any more, maybe we want to simply fail?
+        bindPatt py =<< close px
+      (False, True) -> do
+        bindPatt px =<< close py
+      (False, False) -> error "checkLazy: both patterns not closeable"
+  And cx cy -> checkLazy cx  >> checkLazy cy
+  -- NB: Below, `alt` is necessary since `checkLazy` can modify the state
+  Or cx cy -> checkLazy cx `alt` checkLazy cy
   -- NB: The line below (commented out) is probably incorrect. In case of Lazy
   -- matching, some embedded check may succeed simply because we cannot
   -- determine its status yet (see (*) above).  Hence, negating the embedded
   -- result doesn't make sense.
-  -- Neg c -> not <$> check Lazy c
+  -- Neg c -> not <$> checkLazy c
 --   TrueC -> pure ()
 --   IsTrue px -> do
 --     cx <- closeable px
@@ -1321,7 +1346,7 @@ close p =
         close p1 >>  close p2
       With p c -> do
         it <- close p
-        check Strict c
+        checkStrict c
         return it
       Let x e y -> error "close Let"
       -- Not sure what to do with the patterns below.  The intuitive
@@ -1432,7 +1457,7 @@ apply Rule{..} items = do
     (uncurry $ match Strict)
     (zip antecedents items)
   -- Make sure the side condition holds
-  check Strict condition
+  checkStrict condition
   -- Convert the consequent to the resulting item
   close consequent
 
@@ -1536,9 +1561,11 @@ getLockKey (O op) = case op of
     -- should yield the same result.
     s1 <- getLockKey x
     s2 <- getLockKey y
+    -- NOTE: Perhaps the behavior below should be analoguous to how `Or` is
+    -- handled in `getLockKeyC`?
     if s1 == s2
        then return s1
-       else error "getLockKey Or: different results for different branches"
+       else error "getLockKey Choice: different results for different branches"
   Seq x y -> (<>) <$> getLockKey x <*> getLockKey y
   -- TODO: Below, do we need to retrieve lock keys from `p`?
   Via p x -> (<>) <$> getLockKey p <*> getLockKey x
@@ -1560,8 +1587,14 @@ getLockKeyC = \case
       (False, True) -> pure $ S.singleton py
       _ -> pure S.empty
   And c1 c2 -> (<>) <$> getLockKeyC c1 <*> getLockKeyC c2
-  -- NB: `alt` is not necessary since `getLockVar` doesn't modify the state
-  Or c1 c2 -> getLockKeyC c1 <|> getLockKeyC c2
+  -- NB: `alt` not necessary below since `getLockVar` doesn't modify the state
+--   Or c1 c2 -> getLockKeyC c1 <|> getLockKeyC c2
+  Or c1 c2 -> do
+    k1 <- getLockKeyC c1
+    k2 <- getLockKeyC c2
+    if k1 == k2
+       then return k1
+       else return k1 <|> return k2
   -- Neg c -> getLockKeyC c
 --   TrueC -> pure S.empty
 --   IsTrue p ->
@@ -1590,7 +1623,6 @@ _locksFor
   -> m ()
 _locksFor rule handler = do
   runMatchT $ do
-    -- forEach (pickOne (antecedents rule)) $ \(main, rest) -> do
     dummyMatch $ mainAnte rule
     case otherAntes rule of
       [other] -> do

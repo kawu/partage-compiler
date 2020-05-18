@@ -86,7 +86,7 @@ addToAgenda x = do
     ST.modify' $ setL agenda (S.insert x ag)
 
 
--- | Add an item to a chart (also put it in the corresponding indexing
+-- | Add an item to a chart (also put it in the corresponding index
 -- structures).
 addToChart :: (MonadIO m) => U.Rigit -> ChartT m ()
 addToChart x = do
