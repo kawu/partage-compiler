@@ -85,7 +85,7 @@ module ParComp.Pattern.Untyped
   , runMatchT
   , match
   , close
-  , checkStrict
+  -- , checkStrict
   -- , checkLazy
 
   -- * Rule
@@ -1180,11 +1180,14 @@ checkStrict = \case
   Or cx cy -> do
     -- This is somewhat low-level, but serves the purpose
     let cxProd = P.enumerate (checkStrict cx)
-    P.lift (P.head cxProd) >>= \case
-      Nothing -> checkStrict cy
-      Just () -> return ()
+    P.lift (P.next cxProd) >>= \case
+      Left _  -> checkStrict cy
+      Right _ -> return ()
+--     P.lift (P.head cxProd) >>= \case
+--       Nothing -> checkStrict cy
+--       Just () -> return ()
   -- NB: The implementation below (commented out) may perform redundant checks
-  -- Or cx cy -> checkStrict cx <|> checkStrict cy
+--   Or cx cy -> checkStrict cx <|> checkStrict cy
 
 
 -- -- | Check the side condition expression.  A strict version, which does not
