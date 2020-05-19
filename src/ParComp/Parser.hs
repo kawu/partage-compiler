@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE TupleSections #-}
 
 
 -- | Parsing with deduction rules and indexing structures
@@ -12,7 +13,8 @@ module ParComp.Parser
   ) where
 
 
--- import qualified Prelude as P
+import           Prelude
+import qualified Prelude as P
 
 import           Control.Monad (forM_, guard, unless)
 import qualified Control.Monad.State.Strict as ST
@@ -115,17 +117,16 @@ addToChart x = do
 
 
 -- | Register an index with the given lock.
-registerLock :: (Monad m) => I.Lock -> ChartT m ()
-registerLock lock = do
-  let temp = I.lockTemplate lock
-      key = I.lockKey lock
+registerKeys :: (Monad m) => I.Template -> S.Set I.Key -> ChartT m ()
+registerKeys temp keys = do
+  let keyMap = M.fromAscList . fmap (, M.empty) $ S.toAscList keys
   ST.modify'
     . modL' indexMap
     $ M.insertWith
-        M.union
-        -- (M.unionWith (M.unionWith S.union))
+        -- M.union
+        (M.unionWith (M.unionWith S.union))
         temp
-        (M.singleton key M.empty)
+        keyMap
 
 
 -- | Save key for the given lock, together with the corresponding item.
@@ -138,10 +139,12 @@ saveKeyVal
   -> ChartT m ()
 saveKeyVal temp key val item = ST.modify'
   . modL' indexMap
-  $ M.insertWith
-      (M.unionWith (M.unionWith S.union))
-      temp
+  $ M.insertWith merge temp
       (M.singleton key (M.singleton val (S.singleton item)))
+  where
+    merge x y = x `P.seq` y `P.seq` M.unionWith merge' x y
+    merge' x y = x `P.seq` y `P.seq` M.unionWith S.union x y
+    -- merge'' x y = x `P.seq` y `P.seq` S.union x y
 
 
 -- | Retrieve the index with the given lock.
@@ -165,7 +168,11 @@ chartParse
   -> Ty.Pattern a
     -- ^ Pattern the final item should match
   -> IO (Maybe a)
-chartParse baseItems ruleMap finalPatt =
+chartParse baseItems ruleMap finalPatt = do
+
+  let addIndexInfo (n, r) = (n,) <$> I.addIndexInfo r
+  dirRuleMap <- M.fromList <$>
+    mapM addIndexInfo (M.toList dirRuleMapNoInfo)
 
   flip ST.evalStateT emptyState $ do
 
@@ -175,29 +182,35 @@ chartParse baseItems ruleMap finalPatt =
 --       liftIO $ do
 --         T.putStr "### Rule: "
 --         print rule
-      lock <- I.locksFor rule
+      (otherPatt, otherInfo) <- each $ I.otherAntes rule
+      let temp = I.indexTemp otherInfo
+          keys = I.indexKeys otherInfo
 --       liftIO $ do
---         T.putStr "### Lock: "
---         print lock
-      lift $ registerLock lock
+--         T.putStrLn "### Lock"
+--         print temp
+--         print keys
+      lift $ registerKeys temp keys
+
+    -- Retrieve the index map, otherwise benchmarks indicate a memory leak
+    ixMap <- ST.gets $ getL indexMap
 
     -- Put all base items to agenda
-    mapM_ addToAgenda (fmap U.encodeI baseItems)
+    ixMap `P.seq` mapM_ addToAgenda (fmap U.encodeI baseItems)
 
     -- Process the agenda
-    processAgenda
+    processAgenda dirRuleMap
 
   where
 
-    -- Map of untyped directional rules
-    dirRuleMap = M.fromList $ do
+    -- Map of untyped directional rules with no index information
+    dirRuleMapNoInfo = M.fromList $ do
       (name, typedRule) <- M.toList ruleMap
       let rule = Ty.compileRule typedRule
       (k, dirRule) <- zip [1..] $ R.directRule rule
       return (name `T.append` T.pack (show k), dirRule)
 
     -- Process agenda until final item found (or until empty)
-    processAgenda = do
+    processAgenda dirRuleMap = do
       popFromAgenda >>= \case
         Nothing -> return Nothing
         Just item -> do
@@ -210,12 +223,12 @@ chartParse baseItems ruleMap finalPatt =
                addToChart item
                return . Just $ U.decodeI item
              else do
-               handleItem item
+               handleItem dirRuleMap item
                addToChart item
-               processAgenda
+               processAgenda dirRuleMap
 
     -- Try to match the given item with other items already in the chart
-    handleItem item = do
+    handleItem dirRuleMap item = do
 --       liftIO $ do
 --         T.putStr "### Popped: "
 --         print item

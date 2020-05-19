@@ -34,6 +34,12 @@ module ParComp.Pattern.Indexing
   -- * Rule application
   , Index
   , applyDirRule
+
+  -- * Index info
+  , IndexInfo (..)
+  , DirRule (..)
+  , addIndexInfo
+  -- , rmIndexInfo
   ) where
 
 
@@ -46,8 +52,8 @@ import           Control.Monad (guard, forM) --, void, forM)
 import           Control.Applicative ((<|>))
 
 import qualified Pipes as P
--- import qualified Pipes.Prelude as P
--- 
+import qualified Pipes.Prelude as P
+
 -- import           Data.Lens.Light
 -- 
 -- import qualified Data.Primitive.Array as A
@@ -304,6 +310,63 @@ keyValFor vars = do
 
 
 --------------------------------------------------
+-- Directional rule with index information
+--------------------------------------------------
+
+
+-- | Index-related information
+data IndexInfo = IndexInfo
+  { indexTemp :: Template
+    -- ^ Index template
+  , indexKeys :: S.Set Key
+    -- ^ Index keys
+  } deriving (Show, Eq, Ord)
+
+
+-- | Directional rule with index information assigned to other antecedents
+data DirRule = DirRule
+  { mainAnte :: Pattern
+    -- ^ The main antecedent pattern
+  , otherAntes :: [(Pattern, IndexInfo)]
+    -- ^ The other antecedent patterns
+  , dirConseq :: Pattern
+    -- ^ The rule's consequent
+  } deriving (Show, Eq, Ord)
+
+
+-- | Add index information to a directional rule.
+addIndexInfo :: (P.MonadIO m) => R.DirRule -> m DirRule
+addIndexInfo rule = do
+  -- TODO: locksFor also handles binary rules only
+  locks <- P.toListM (P.enumerate $ locksFor rule)
+  let temp = getGroupTemplate locks
+      keys = S.fromList [lockKey lock | lock <- locks]
+      info = IndexInfo temp keys
+  return $ DirRule
+    { mainAnte = R.mainAnte rule
+    , otherAntes = case R.otherAntes rule of
+        [other] -> [(other, info)]
+        _ -> error "addIndexInfo: doesn't handle non-binary rules"
+    , dirConseq = R.dirConseq rule
+    }
+  where
+    getGroupTemplate :: [Lock] -> Template
+    getGroupTemplate xs =
+      case S.toList (S.fromList $ map lockTemplate xs) of
+        [temp] -> temp
+        _ -> error "addIndexInfo: unexpected number of templates"
+
+
+-- -- | Add index information to a directional rule.
+-- rmIndexInfo :: DirRule -> R.DirRule
+-- rmIndexInfo DirRule{..} = R.DirRule
+--   { R.mainAnte = mainAnte
+--   , R.otherAntes = map fst otherAntes
+--   , R.dirConseq = dirConseq
+--   }
+
+
+--------------------------------------------------
 -- Rule's application
 --------------------------------------------------
 
@@ -319,7 +382,7 @@ applyDirRule
   -> (Template -> m Index)
                     -- ^ Function which retrieves the index
                     -- for a given template
-  -> R.DirRule
+  -> DirRule
   -> Un.Rigit
   -> Un.MatchT m Un.Rigit
 applyDirRule ruleName getIndex rule mainItem = do
@@ -330,12 +393,14 @@ applyDirRule ruleName getIndex rule mainItem = do
 -- --     print $ Un.otherAntes rule !! 0
 --     -- print $ Un.mainAnte rule
 --     -- print mainItem
-  Un.match Un.Strict (R.mainAnte rule) mainItem
-  case R.otherAntes rule of
-    [otherPatt] -> do
-      lock <- mkLock otherPatt
-      let template = lockTemplate lock
-          key = lockKey lock
+  Un.match Un.Strict (mainAnte rule) mainItem
+  case otherAntes rule of
+    [(otherPatt, otherInfo)] -> do
+--       lock <- mkLock otherPatt
+--       let template = lockTemplate lock
+--           key = lockKey lock
+      let template = indexTemp otherInfo
+      key <- each . S.toList $ indexKeys otherInfo
 --       liftIO $ do
 --         T.putStr "@@@ Template: "
 --         print template
@@ -361,7 +426,7 @@ applyDirRule ruleName getIndex rule mainItem = do
 --         liftIO $ do
 --           T.putStr "@@@ Closing: "
 --           print (Un.dirConseq rule)
-        result <- Un.close (R.dirConseq rule)
+        result <- Un.close (dirConseq rule)
         -- We managed to apply a rule!
 --         liftIO $ do
 --           T.putStr "@@@ "
@@ -373,3 +438,9 @@ applyDirRule ruleName getIndex rule mainItem = do
         -- Return the result
         return result
     _ -> error "applyRule: doesn't handle non-binary rules"
+
+
+  where
+
+    -- For each element in the list
+    each = P.Select . P.each
