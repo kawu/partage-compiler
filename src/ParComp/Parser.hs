@@ -41,15 +41,15 @@ import           ParComp.Pattern.Typed (Pattern(..), Patt(..))
 --------------------------------------------------
 
 
--- | Index type: NEW
-type Index = M.Map I.IndexKey (M.Map I.KeyVal (S.Set U.Rigit))
+-- -- | Index type: NEW
+-- type Index = M.Map I.IndexKey (M.Map I.KeyVal (S.Set U.Rigit))
 
 
 -- | State of the parser
 data State = State
   { _agenda :: S.Set U.Rigit
   , _chart :: S.Set U.Rigit
-  , _indexMap :: M.Map I.IndexTemplate Index
+  , _indexMap :: M.Map I.IndexTemplate I.Index
   } deriving (Show, Eq, Ord)
 $( makeLenses [''State] )
 
@@ -150,73 +150,9 @@ saveKeyVal temp key val item = ST.modify'
 
 
 -- | Retrieve the index with the given lock.
-retrieveIndex :: (Monad m) => I.IndexTemplate -> ChartT m Index
+retrieveIndex :: (Monad m) => I.IndexTemplate -> ChartT m I.Index
 retrieveIndex template =
   ST.gets $ maybe M.empty id . M.lookup template . getL indexMap
-
-
---------------------------------------------------
--- Indexing
---------------------------------------------------
-
-
--- | Apply directional rule.
-applyDirRule
-  :: (MonadIO m)
-  => T.Text
-  -> R.DirRule
-  -> U.Rigit
-  -> U.MatchT (ChartT m) U.Rigit
-applyDirRule ruleName rule mainItem = do
---   liftIO $ do
---     T.putStr "@@@ Matching: "
---     T.putStrLn ruleName
--- --     T.putStr "@@@ Other Ante: "
--- --     print $ U.otherAntes rule !! 0
---     -- print $ U.mainAnte rule
---     -- print mainItem
-  U.match U.Strict (R.mainAnte rule) mainItem
-  case R.otherAntes rule of
-    [otherPatt] -> do
-      lock <- I.mkLock otherPatt
-      let template = I.lockTemplate lock
-          key = I.lockKey lock
---       liftIO $ do
---         T.putStr "@@@ Template: "
---         print template
---         T.putStr "@@@ Key: "
---         print key
-      index <- U.lift $ retrieveIndex template
-      let valItemMap = maybe M.empty id $ M.lookup key index
---       liftIO $ do
---         T.putStr "@@@ Index: "
---         print valItemMap
-      keyVal <- I.keyValFor key
---       liftIO $ do
---         T.putStr "@@@ Val: "
---         print keyVal
-      let otherItems = do
-            maybe [] S.toList $ M.lookup keyVal valItemMap
-      U.forEach otherItems $ \otherItem -> do
---         liftIO $ do
---           T.putStr "@@@ Other: "
---           print otherItem
-        U.match U.Strict otherPatt otherItem
---         liftIO $ do
---           T.putStr "@@@ Closing: "
---           print (U.dirConseq rule)
-        result <- U.close (R.dirConseq rule)
-        -- We managed to apply a rule!
---         liftIO $ do
---           T.putStr "@@@ "
---           T.putStr ruleName
---           T.putStr ": "
---           putStr $ show [mainItem, otherItem]
---           T.putStr " => "
---           print result
-        -- Return the result
-        return result
-    _ -> error "applyRule: doesn't handle non-binary rules"
 
 
 --------------------------------------------------
@@ -291,7 +227,7 @@ chartParse baseItems ruleMap finalPatt =
       -- For each deduction rule
       forM_ (M.toList dirRuleMap) $ \(ruleName, rule) -> do
         U.runMatchT $ do
-          result <- applyDirRule ruleName rule item
+          result <- I.applyDirRule ruleName retrieveIndex rule item
           U.lift $ addToAgenda result
 
     -- For each element in the list

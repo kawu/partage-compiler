@@ -30,6 +30,10 @@ module ParComp.Pattern.Indexing
   , getLockKey
   , keyValFor
   , locksFor
+
+  -- * Rule application
+  , Index
+  , applyDirRule
   ) where
 
 
@@ -51,7 +55,7 @@ import qualified Pipes as P
 -- import           Data.Void (Void)
 -- import           Data.String (IsString)
 import qualified Data.Foldable as F
--- import qualified Data.Text as T
+import qualified Data.Text as T
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 
@@ -297,3 +301,75 @@ keyValFor vars = do
 --       putStr ">>> With "
 --       print it
     return (p, it)
+
+
+--------------------------------------------------
+-- Rule's application
+--------------------------------------------------
+
+
+-- | Index structure
+type Index = M.Map IndexKey (M.Map KeyVal (S.Set Un.Rigit))
+
+
+-- | Apply directional rule.
+applyDirRule
+  :: (P.MonadIO m)
+  => T.Text         -- ^ Rule's name
+  -> (IndexTemplate -> m Index)
+                    -- ^ Function which retrieves the index
+                    -- for a given template
+  -> R.DirRule
+  -> Un.Rigit
+  -> Un.MatchT m Un.Rigit
+applyDirRule ruleName getIndex rule mainItem = do
+--   liftIO $ do
+--     T.putStr "@@@ Matching: "
+--     T.putStrLn ruleName
+-- --     T.putStr "@@@ Other Ante: "
+-- --     print $ Un.otherAntes rule !! 0
+--     -- print $ Un.mainAnte rule
+--     -- print mainItem
+  Un.match Un.Strict (R.mainAnte rule) mainItem
+  case R.otherAntes rule of
+    [otherPatt] -> do
+      lock <- mkLock otherPatt
+      let template = lockTemplate lock
+          key = lockKey lock
+--       liftIO $ do
+--         T.putStr "@@@ Template: "
+--         print template
+--         T.putStr "@@@ Key: "
+--         print key
+      index <- Un.lift $ getIndex template
+      -- index <- Un.lift $ retrieveIndex template
+      let valItemMap = maybe M.empty id $ M.lookup key index
+--       liftIO $ do
+--         T.putStr "@@@ Index: "
+--         print valItemMap
+      keyVal <- keyValFor key
+--       liftIO $ do
+--         T.putStr "@@@ Val: "
+--         print keyVal
+      let otherItems = do
+            maybe [] S.toList $ M.lookup keyVal valItemMap
+      Un.forEach otherItems $ \otherItem -> do
+--         liftIO $ do
+--           T.putStr "@@@ Other: "
+--           print otherItem
+        Un.match Un.Strict otherPatt otherItem
+--         liftIO $ do
+--           T.putStr "@@@ Closing: "
+--           print (Un.dirConseq rule)
+        result <- Un.close (R.dirConseq rule)
+        -- We managed to apply a rule!
+--         liftIO $ do
+--           T.putStr "@@@ "
+--           T.putStr ruleName
+--           T.putStr ": "
+--           putStr $ show [mainItem, otherItem]
+--           T.putStr " => "
+--           print result
+        -- Return the result
+        return result
+    _ -> error "applyRule: doesn't handle non-binary rules"
