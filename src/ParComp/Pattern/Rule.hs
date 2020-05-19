@@ -9,7 +9,6 @@ module ParComp.Pattern.Rule
   -- ** Directional rule
   , DirRule (..)
   , directRule
-
   ) where
 
 

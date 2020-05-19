@@ -41,15 +41,11 @@ import           ParComp.Pattern.Typed (Pattern(..), Patt(..))
 --------------------------------------------------
 
 
--- -- | Index type: NEW
--- type Index = M.Map I.IndexKey (M.Map I.KeyVal (S.Set U.Rigit))
-
-
 -- | State of the parser
 data State = State
   { _agenda :: S.Set U.Rigit
   , _chart :: S.Set U.Rigit
-  , _indexMap :: M.Map I.IndexTemplate I.Index
+  , _indexMap :: M.Map I.Template I.Index
   } deriving (Show, Eq, Ord)
 $( makeLenses [''State] )
 
@@ -136,8 +132,8 @@ registerLock lock = do
 -- | Save key for the given lock, together with the corresponding item.
 saveKeyVal
   :: (Monad m)
-  => I.IndexTemplate
-  -> I.IndexKey
+  => I.Template
+  -> I.Key
   -> I.KeyVal
   -> U.Rigit
   -> ChartT m ()
@@ -150,7 +146,7 @@ saveKeyVal temp key val item = ST.modify'
 
 
 -- | Retrieve the index with the given lock.
-retrieveIndex :: (Monad m) => I.IndexTemplate -> ChartT m I.Index
+retrieveIndex :: (Monad m) => I.Template -> ChartT m I.Index
 retrieveIndex template =
   ST.gets $ maybe M.empty id . M.lookup template . getL indexMap
 

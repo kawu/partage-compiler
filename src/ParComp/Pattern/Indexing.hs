@@ -22,8 +22,8 @@ module ParComp.Pattern.Indexing
     dummyMatch
 
   -- * Indexing (locks and keys)
-  , IndexTemplate
-  , IndexKey
+  , Template
+  , Key
   , Lock (..)
   , KeyVal
   , mkLock
@@ -152,11 +152,11 @@ dummyMatch p = do
 
 -- | Index template: a pattern which determines which items can be stored in the
 -- corresponding index structure.
-type IndexTemplate = Pattern
+type Template = Pattern
 
 
 -- | Index key: a set of patterns which describe a particular search criterion.
-type IndexKey = S.Set Pattern
+type Key = S.Set Pattern
 
 
 -- | Lock determines the indexing structure.
@@ -165,9 +165,9 @@ type IndexKey = S.Set Pattern
 -- corresponding `Key`(s).  These keys then allow to find the item (pattern) in
 -- the index corresponding to the lock.
 data Lock = Lock
-  { lockTemplate :: IndexTemplate
+  { lockTemplate :: Template
     -- ^ Lock's template
-  , lockKey :: IndexKey
+  , lockKey :: Key
     -- ^ Relevant variables and patterns, whose values need to be specified in
     -- the corresponding key
   } deriving (Show, Eq, Ord)
@@ -179,7 +179,7 @@ type KeyVal = M.Map Pattern Rigit
 
 
 -- | Retrieve the index keys for a given index template.
-getLockKey :: (P.MonadIO m) => IndexTemplate -> MatchT m IndexKey
+getLockKey :: (P.MonadIO m) => Template -> MatchT m Key
 getLockKey (P ip) = case ip of
   Unit -> pure S.empty
   Sym _ -> pure S.empty
@@ -259,7 +259,7 @@ getLockKeyC = \case
 
 -- | Retrieve the lock of the pattern.  The lock can be used to determine the
 -- corresponding indexing structure.
-mkLock :: (P.MonadIO m) => IndexTemplate -> MatchT m Lock
+mkLock :: (P.MonadIO m) => Template -> MatchT m Lock
 mkLock p = Lock p <$> getLockKey p
 
 
@@ -287,7 +287,7 @@ _locksFor rule handler = do
 
 -- | Retrieve the values of the global variables in the lock, thus creating the
 -- key corresponding to the lock based on the current environment.
-keyValFor :: (P.MonadIO m) => IndexKey -> MatchT m KeyVal
+keyValFor :: (P.MonadIO m) => Key -> MatchT m KeyVal
 keyValFor vars = do
   let ps = S.toList vars
   fmap M.fromList . forM ps $ \p -> do
@@ -309,14 +309,14 @@ keyValFor vars = do
 
 
 -- | Index structure
-type Index = M.Map IndexKey (M.Map KeyVal (S.Set Un.Rigit))
+type Index = M.Map Key (M.Map KeyVal (S.Set Un.Rigit))
 
 
 -- | Apply directional rule.
 applyDirRule
   :: (P.MonadIO m)
   => T.Text         -- ^ Rule's name
-  -> (IndexTemplate -> m Index)
+  -> (Template -> m Index)
                     -- ^ Function which retrieves the index
                     -- for a given template
   -> R.DirRule
