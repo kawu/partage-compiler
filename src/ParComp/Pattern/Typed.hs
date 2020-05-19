@@ -58,6 +58,7 @@ import qualified Data.Text as T
 
 import qualified ParComp.Pattern.Untyped as U
 import           ParComp.Pattern.Untyped (IsItem)
+import qualified ParComp.Pattern.Rule as R
 
 
 --------------------------------------------------
@@ -326,11 +327,11 @@ data Rule a = Rule
 
 
 -- | Compile the rule to its untyped counterpart.
-compileRule :: Rule a -> U.Rule
-compileRule Rule{..} = U.Rule
-  { U.antecedents = P.map unPatt antecedents
-  , U.consequent  = unPatt consequent
-  , U.condition   = unCond condition
+compileRule :: Rule a -> R.Rule
+compileRule Rule{..} = R.Rule
+  { R.antecedents = P.map unPatt antecedents
+  , R.consequent  = unPatt consequent
+  , R.condition   = unCond condition
   }
 
 

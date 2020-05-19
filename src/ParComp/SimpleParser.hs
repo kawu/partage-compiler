@@ -23,6 +23,7 @@ import qualified Data.Set as S
 import qualified ParComp.Pattern.Untyped as U
 import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed (Pattern(..), Patt(..))
+import qualified ParComp.Pattern.Rule as R
 
 
 -- | State of the parser
@@ -153,7 +154,7 @@ chartParse baseItems tyRuleMap finalPatt =
 --           T.putStr "# Rule: "
 --           T.putStrLn ruleName
         -- For each chart subset
-        subs <- chartSubsets $ length (U.antecedents rule) - 1
+        subs <- chartSubsets $ length (R.antecedents rule) - 1
 --         ST.liftIO $ do
 --           T.putStr "# Subset: "
 --           print subs
@@ -165,7 +166,7 @@ chartParse baseItems tyRuleMap finalPatt =
 --               T.putStr "# Matching: "
 --               print items'
             U.runMatchT $ do
-              result <- U.apply rule items'
+              result <- R.apply rule items'
               U.lift $ addToAgenda result
               -- We managed to apply a rule!
 --               ST.liftIO $ do

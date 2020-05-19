@@ -30,6 +30,8 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 
 import qualified ParComp.Pattern.Untyped as U
+import qualified ParComp.Pattern.Indexing as I
+import qualified ParComp.Pattern.Rule as R
 import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed (Pattern(..), Patt(..))
 
@@ -40,14 +42,14 @@ import           ParComp.Pattern.Typed (Pattern(..), Patt(..))
 
 
 -- | Index type: NEW
-type Index = M.Map U.IndexKey (M.Map U.KeyVal (S.Set U.Rigit))
+type Index = M.Map I.IndexKey (M.Map I.KeyVal (S.Set U.Rigit))
 
 
 -- | State of the parser
 data State = State
   { _agenda :: S.Set U.Rigit
   , _chart :: S.Set U.Rigit
-  , _indexMap :: M.Map U.IndexTemplate Index
+  , _indexMap :: M.Map I.IndexTemplate Index
   } deriving (Show, Eq, Ord)
 $( makeLenses [''State] )
 
@@ -107,10 +109,10 @@ addToChart x = do
       let keys = M.keys . fromJust $ M.lookup template tempKeys
       U.forEach keys $ \key -> do
         -- Determine the value of the key
-        val <- U.keyValFor key
+        val <- I.keyValFor key
 --         liftIO $ do
 --           T.putStr ">>> Lock: "
---           print $ U.Lock template key
+--           print $ I.Lock template key
 --           T.putStr ">>> KeyVal: "
 --           print val
         -- Save the item in the index
@@ -118,10 +120,10 @@ addToChart x = do
 
 
 -- | Register an index with the given lock.
-registerLock :: (Monad m) => U.Lock -> ChartT m ()
+registerLock :: (Monad m) => I.Lock -> ChartT m ()
 registerLock lock = do
-  let temp = U.lockTemplate lock
-      key = U.lockKey lock
+  let temp = I.lockTemplate lock
+      key = I.lockKey lock
   ST.modify'
     . modL' indexMap
     $ M.insertWith
@@ -134,9 +136,9 @@ registerLock lock = do
 -- | Save key for the given lock, together with the corresponding item.
 saveKeyVal
   :: (Monad m)
-  => U.IndexTemplate
-  -> U.IndexKey
-  -> U.KeyVal
+  => I.IndexTemplate
+  -> I.IndexKey
+  -> I.KeyVal
   -> U.Rigit
   -> ChartT m ()
 saveKeyVal temp key val item = ST.modify'
@@ -148,7 +150,7 @@ saveKeyVal temp key val item = ST.modify'
 
 
 -- | Retrieve the index with the given lock.
-retrieveIndex :: (Monad m) => U.IndexTemplate -> ChartT m Index
+retrieveIndex :: (Monad m) => I.IndexTemplate -> ChartT m Index
 retrieveIndex template =
   ST.gets $ maybe M.empty id . M.lookup template . getL indexMap
 
@@ -162,7 +164,7 @@ retrieveIndex template =
 applyDirRule
   :: (MonadIO m)
   => T.Text
-  -> U.DirRule
+  -> R.DirRule
   -> U.Rigit
   -> U.MatchT (ChartT m) U.Rigit
 applyDirRule ruleName rule mainItem = do
@@ -173,12 +175,12 @@ applyDirRule ruleName rule mainItem = do
 -- --     print $ U.otherAntes rule !! 0
 --     -- print $ U.mainAnte rule
 --     -- print mainItem
-  U.match U.Strict (U.mainAnte rule) mainItem
-  case U.otherAntes rule of
+  U.match U.Strict (R.mainAnte rule) mainItem
+  case R.otherAntes rule of
     [otherPatt] -> do
-      lock <- U.mkLock otherPatt
-      let template = U.lockTemplate lock
-          key = U.lockKey lock
+      lock <- I.mkLock otherPatt
+      let template = I.lockTemplate lock
+          key = I.lockKey lock
 --       liftIO $ do
 --         T.putStr "@@@ Template: "
 --         print template
@@ -189,7 +191,7 @@ applyDirRule ruleName rule mainItem = do
 --       liftIO $ do
 --         T.putStr "@@@ Index: "
 --         print valItemMap
-      keyVal <- U.keyValFor key
+      keyVal <- I.keyValFor key
 --       liftIO $ do
 --         T.putStr "@@@ Val: "
 --         print keyVal
@@ -203,7 +205,7 @@ applyDirRule ruleName rule mainItem = do
 --         liftIO $ do
 --           T.putStr "@@@ Closing: "
 --           print (U.dirConseq rule)
-        result <- U.close (U.dirConseq rule)
+        result <- U.close (R.dirConseq rule)
         -- We managed to apply a rule!
 --         liftIO $ do
 --           T.putStr "@@@ "
@@ -242,7 +244,7 @@ chartParse baseItems ruleMap finalPatt =
 --       liftIO $ do
 --         T.putStr "### Rule: "
 --         print rule
-      lock <- U.locksFor rule
+      lock <- I.locksFor rule
 --       liftIO $ do
 --         T.putStr "### Lock: "
 --         print lock
@@ -260,7 +262,7 @@ chartParse baseItems ruleMap finalPatt =
     dirRuleMap = M.fromList $ do
       (name, typedRule) <- M.toList ruleMap
       let rule = Ty.compileRule typedRule
-      (k, dirRule) <- zip [1..] $ U.directRule rule
+      (k, dirRule) <- zip [1..] $ R.directRule rule
       return (name `T.append` T.pack (show k), dirRule)
 
     -- Process agenda until final item found (or until empty)

@@ -29,6 +29,8 @@ import           Data.Maybe (fromJust)
 
 import           ParComp.Pattern.Untyped (Fun(..))
 import qualified ParComp.Pattern.Untyped as U
+import qualified ParComp.Pattern.Indexing as I
+import qualified ParComp.Pattern.Rule as R
 import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed
   ( Pattern, Patt(..)
@@ -442,22 +444,22 @@ testTSG = do
 --------------------------------------------------
 
 
-testCompleteDir :: U.DirRule
-testCompleteDir = U.directRule (Ty.compileRule $ complete testGram) !! 0
+testCompleteDir :: R.DirRule
+testCompleteDir = R.directRule (Ty.compileRule $ complete testGram) !! 0
 
 
 mainTest :: IO ()
 mainTest = do
-  let secondAnte = U.otherAntes testCompleteDir !! 0
+  let secondAnte = R.otherAntes testCompleteDir !! 0
   T.putStr "@@@ Second Ante: "
   print secondAnte
   U.runMatchT $ do
-    U.dummyMatch (U.mainAnte testCompleteDir)
+    I.dummyMatch (R.mainAnte testCompleteDir)
     liftIO $ do
       T.putStrLn "@@@ Dummy matched"
-    lock <- U.mkLock secondAnte
+    lock <- I.mkLock secondAnte
     liftIO $ do
 --       T.putStr "@@@ Template: "
 --       print $ U.lockTemplate lock
       T.putStr "@@@ Key: "
-      print $ U.lockKey lock
+      print $ I.lockKey lock

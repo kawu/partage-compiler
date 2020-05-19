@@ -13,6 +13,7 @@ import           Data.List (sort)
 import           Data.Ord
 
 import qualified ParComp.Pattern.Untyped as Un
+import qualified ParComp.Pattern.Indexing as Ix
 import qualified ParComp.Pattern.Typed as Ty
 import           ParComp.Pattern.Typed
   ( Patt (..), match, match'
@@ -150,16 +151,16 @@ indexUnitTests = testGroup "(indexing)"
       let main  = pair (var "i") (var "j")
           other = pair (var "j") (var "k")
       keys <- Un.toListM $ do
-        Un.dummyMatch (Ty.unPatt main)
-        Un.getLockKey (Ty.unPatt other)
+        Ix.dummyMatch (Ty.unPatt main)
+        Ix.getLockKey (Ty.unPatt other)
       keys @?= [S.singleton . Un.labelP $ Un.Var "j"]
   , testCase "with const True `or` const True" $ do
       let main  = pair (var "i") (var "j")
           cond  = const True `or` const True
           other = pair (var "j") (var "k") `with` cond
       keys <- Un.toListM $ do
-        Un.dummyMatch (Ty.unPatt main)
-        Un.getLockKey (Ty.unPatt other)
+        Ix.dummyMatch (Ty.unPatt main)
+        Ix.getLockKey (Ty.unPatt other)
       keys @?= [S.singleton . Un.labelP $ Un.Var "j"]
   ]
 
