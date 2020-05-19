@@ -26,8 +26,9 @@ import           Data.Lens.Light
 import           Data.Maybe (maybeToList, fromJust)
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
-import qualified Data.Map.Strict as M
-import qualified Data.Set as S
+import qualified Data.Map.Strict as Map
+import qualified Data.HashMap.Strict as M
+import qualified Data.HashSet as S
 
 import qualified ParComp.Pattern.Untyped as U
 import qualified ParComp.Pattern.Indexing as I
@@ -43,9 +44,9 @@ import           ParComp.Pattern.Typed (Pattern(..), Patt(..))
 
 -- | State of the parser
 data State = State
-  { _agenda :: S.Set U.Rigit
-  , _chart :: S.Set U.Rigit
-  , _indexMap :: M.Map I.Template I.Index
+  { _agenda :: S.HashSet U.Rigit
+  , _chart :: S.HashSet U.Rigit
+  , _indexMap :: M.HashMap I.Template I.Index
   } deriving (Show, Eq, Ord)
 $( makeLenses [''State] )
 
@@ -67,11 +68,18 @@ emptyState = State S.empty S.empty M.empty
 popFromAgenda :: (Monad m) => ChartT m (Maybe U.Rigit)
 popFromAgenda = do
   st <- ST.get
-  case S.minView (getL agenda st) of
-    Nothing -> return Nothing
-    Just (x, agenda') -> do
-      ST.put $ setL agenda agenda' st
+--   case S.minView (getL agenda st) of
+--     Nothing -> return Nothing
+--     Just (x, agenda') -> do
+--       ST.put $ setL agenda agenda' st
+--       return (Just x)
+  let agendaBefore = getL agenda st
+  case S.toList agendaBefore of
+    x : _ -> do
+      let agendaAfter = S.delete x agendaBefore
+      ST.put $ setL agenda agendaAfter st
       return (Just x)
+    [] -> return Nothing
 
 
 -- | Remove an item from agenda.
@@ -112,6 +120,23 @@ addToChart x = do
 --           print val
         -- Save the item in the index
         U.lift $ saveKeyVal template key val x
+--       -- For each key
+--       let onKey index' key = do
+--             -- Determine the value of the key
+--             val <- I.keyValFor key
+-- --             liftIO $ do
+-- --               T.putStr ">>> Lock: "
+-- --               print $ I.Lock template key
+-- --               T.putStr ">>> KeyVal: "
+-- --               print val
+--             return $ M.insertWith
+--               (M.unionWith S.union)
+--               key
+--               (M.singleton val (S.singleton x))
+--               index'
+--       index' <- U.foldEach onKey index (M.keys index)
+--       -- Update the index
+--       U.lift $ updateIndex template index'
 
 
 -- | Register an index with the given lock.
@@ -126,6 +151,20 @@ registerLock lock = do
         -- (M.unionWith (M.unionWith S.union))
         temp
         (M.singleton key M.empty)
+
+
+-- | Update the index.
+updateIndex
+  :: (Monad m)
+  => I.Template
+  -> I.Index    -- ^ New index fragment
+  -> ChartT m ()
+updateIndex temp index = ST.modify'
+  . modL' indexMap
+  $ M.insertWith
+      (M.unionWith (M.unionWith S.union))
+      temp
+      index -- (M.singleton key (M.singleton val (S.singleton item)))
 
 
 -- | Save key for the given lock, together with the corresponding item.
@@ -160,7 +199,7 @@ chartParse
   :: (U.IsItem a)
   => [a]
     -- ^ Axiom-generated items
-  -> M.Map T.Text (Ty.Rule a)
+  -> Map.Map T.Text (Ty.Rule a)
     -- ^ Named deduction rules
   -> Ty.Pattern a
     -- ^ Pattern the final item should match
@@ -191,7 +230,7 @@ chartParse baseItems ruleMap finalPatt =
 
     -- Map of untyped directional rules
     dirRuleMap = M.fromList $ do
-      (name, typedRule) <- M.toList ruleMap
+      (name, typedRule) <- Map.toList ruleMap
       let rule = Ty.compileRule typedRule
       (k, dirRule) <- zip [1..] $ R.directRule rule
       return (name `T.append` T.pack (show k), dirRule)

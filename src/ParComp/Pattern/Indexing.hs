@@ -56,8 +56,10 @@ import qualified Pipes as P
 -- import           Data.String (IsString)
 import qualified Data.Foldable as F
 import qualified Data.Text as T
-import qualified Data.Map.Strict as M
+-- import qualified Data.Map.Strict as M
+import qualified Data.HashMap.Strict as HM
 import qualified Data.Set as S
+import qualified Data.HashSet as HS
 
 import qualified ParComp.Pattern.Untyped as Un
 import           ParComp.Pattern.Untyped
@@ -156,7 +158,7 @@ type Template = Pattern
 
 
 -- | Index key: a set of patterns which describe a particular search criterion.
-type Key = S.Set Pattern
+type Key = HS.HashSet Pattern
 
 
 -- | Lock determines the indexing structure.
@@ -175,40 +177,40 @@ data Lock = Lock
 
 -- | Key assigns values to the variables (and patterns) in the corresponding
 -- lock (in `lockKey`, more precisely).
-type KeyVal = M.Map Pattern Rigit
+type KeyVal = HM.HashMap Pattern Rigit
 
 
 -- | Retrieve the index keys for a given index template.
 getLockKey :: (P.MonadIO m) => Template -> MatchT m Key
 getLockKey (P ip) = case ip of
-  Unit -> pure S.empty
-  Sym _ -> pure S.empty
+  Unit -> pure HS.empty
+  Sym _ -> pure HS.empty
   -- Vec v -> foldMap getLockKey v
   Vec v -> do
     -- TODO: perhaps possible to handle this case more efficiently?
     let f prev x = do
           next <- getLockKey x
           return (prev <> next)
-    F.foldlM f S.empty v
+    F.foldlM f HS.empty v
   Tag _ x -> getLockKey x
 getLockKey (O op) = case op of
   Label v ->
     Un.lookupVar v >>= \case
-      Just it -> pure $ S.singleton (Un.labelP v)
-      Nothing -> pure S.empty
+      Just it -> pure $ HS.singleton (Un.labelP v)
+      Nothing -> pure HS.empty
   Local v -> error "getLockKey: encountered local variable!"
-  Any -> pure S.empty
+  Any -> pure HS.empty
   Map fn p -> do
     Un.closeable p >>= \case
-      True -> pure $ S.singleton (Un.mapP fn p)
-      False -> pure S.empty
+      True -> pure $ HS.singleton (Un.mapP fn p)
+      False -> pure HS.empty
   Map' f p -> do
     Un.closeable p >>= \case
       True ->
         trace "getLockKey: doesn't handle Map' with a closeable pattern" $
-          pure S.empty
-      False -> pure S.empty
-  App _ -> pure S.empty
+          pure HS.empty
+      False -> pure HS.empty
+  App _ -> pure HS.empty
   Choice x y -> do
     -- NB: Since we assume that both @x@ and @y@ contain the same global
     -- variables (see `globalVarsIn`), @getLockKey x@ and @getLockKey y@
@@ -227,19 +229,19 @@ getLockKey (O op) = case op of
   -- Below, ignore `x` and `y`, which should contain local variables only
   Let x e y -> getLockKey e
   Fix p -> getLockKey p
-  Rec -> pure S.empty
+  Rec -> pure HS.empty
 
 
 -- | Retrieve the bound variables and patterns for the lock.
-getLockKeyC :: (P.MonadIO m) => Cond Pattern -> MatchT m (S.Set Pattern)
+getLockKeyC :: (P.MonadIO m) => Cond Pattern -> MatchT m (HS.HashSet Pattern)
 getLockKeyC = \case
   Eq px py -> do
     cx <- Un.closeable px
     cy <- Un.closeable py
     case (cx, cy) of
-      (True, False) -> pure $ S.singleton px
-      (False, True) -> pure $ S.singleton py
-      _ -> pure S.empty
+      (True, False) -> pure $ HS.singleton px
+      (False, True) -> pure $ HS.singleton py
+      _ -> pure HS.empty
   And c1 c2 -> (<>) <$> getLockKeyC c1 <*> getLockKeyC c2
   -- NB: `alt` not necessary below since `getLockVar` doesn't modify the state
 --   Or c1 c2 -> getLockKeyC c1 <|> getLockKeyC c2
@@ -250,11 +252,11 @@ getLockKeyC = \case
        then return k1
        else return k1 <|> return k2
   -- Neg c -> getLockKeyC c
---   TrueC -> pure S.empty
+--   TrueC -> pure HS.empty
 --   IsTrue p ->
 --     Un.closeable p >>= \case
---       True  -> pure $ S.singleton p
---       False -> pure S.empty
+--       True  -> pure $ HS.singleton p
+--       False -> pure HS.empty
 
 
 -- | Retrieve the lock of the pattern.  The lock can be used to determine the
@@ -289,8 +291,8 @@ _locksFor rule handler = do
 -- key corresponding to the lock based on the current environment.
 keyValFor :: (P.MonadIO m) => Key -> MatchT m KeyVal
 keyValFor vars = do
-  let ps = S.toList vars
-  fmap M.fromList . forM ps $ \p -> do
+  let ps = HS.toList vars
+  fmap HM.fromList . forM ps $ \p -> do
 --     P.liftIO $ do
 --       putStr ">>> Closing "
 --       print p
@@ -309,7 +311,7 @@ keyValFor vars = do
 
 
 -- | Index structure
-type Index = M.Map Key (M.Map KeyVal (S.Set Un.Rigit))
+type Index = HM.HashMap Key (HM.HashMap KeyVal (HS.HashSet Un.Rigit))
 
 
 -- | Apply directional rule.
@@ -343,7 +345,7 @@ applyDirRule ruleName getIndex rule mainItem = do
 --         print key
       index <- Un.lift $ getIndex template
       -- index <- Un.lift $ retrieveIndex template
-      let valItemMap = maybe M.empty id $ M.lookup key index
+      let valItemMap = maybe HM.empty id $ HM.lookup key index
 --       liftIO $ do
 --         T.putStr "@@@ Index: "
 --         print valItemMap
@@ -352,7 +354,7 @@ applyDirRule ruleName getIndex rule mainItem = do
 --         T.putStr "@@@ Val: "
 --         print keyVal
       let otherItems = do
-            maybe [] S.toList $ M.lookup keyVal valItemMap
+            maybe [] HS.toList $ HM.lookup keyVal valItemMap
       Un.forEach otherItems $ \otherItem -> do
 --         liftIO $ do
 --           T.putStr "@@@ Other: "

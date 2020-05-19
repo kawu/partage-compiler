@@ -8,7 +8,7 @@ import           Test.Tasty.SmallCheck as SC
 import           Test.Tasty.QuickCheck as QC
 import           Test.Tasty.HUnit
 
-import qualified Data.Set as S
+import qualified Data.HashSet as S
 import           Data.List (sort)
 import           Data.Ord
 

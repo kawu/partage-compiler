@@ -9,6 +9,9 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE DerivingStrategies #-}
 
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+
 -- {-# LANGUAGE ScopedTypeVariables #-}
 -- {-# LANGUAGE PartialTypeSignatures #-}
 
@@ -85,6 +88,7 @@ module ParComp.Pattern.Untyped
   , toListT
   , lift
   , forEach
+  -- , foldEach
   , runMatchT
   , match
   , close
@@ -123,12 +127,21 @@ import qualified Data.Text as T
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 
+import           GHC.Generics (Generic)
+import qualified Data.Hashable as H
+
 import           Debug.Trace (trace)
 
 
 --------------------------------------------------
 -- Item
 --------------------------------------------------
+
+
+-- Orphan Hashable instance for primitive array (DANGEROUS! Use newtype?)
+instance (H.Hashable a) => H.Hashable (A.Array a) where
+  hashWithSalt salt = H.hashWithSalt salt . F.toList
+  {-# INLINE hashWithSalt #-}
 
 
 -- | Chart item expression
@@ -142,7 +155,7 @@ data Item expr where
   Tag   :: {-# UNPACK #-} !Int -> expr -> Item expr
 --   Num   :: {-# UNPACK #-} !Int -> Item expr
 --   -- ^ Integral number
-  deriving (Show, Eq, Ord)
+  deriving (Show, Eq, Ord, Generic, H.Hashable)
 
 
 -- instance (Show expr) => Show (Item expr) where
@@ -156,6 +169,7 @@ data Item expr where
 newtype Rigit = I (Item Rigit)
   deriving (Eq, Ord)
   deriving newtype (Show)
+  deriving newtype (H.Hashable)
 
 
 -- | Extract the rigit item.
@@ -216,6 +230,10 @@ instance Eq (Fun a b) where
 instance Ord (Fun a b) where
   x `compare` y = fname x `compare` fname y
 
+instance H.Hashable (Fun a b) where
+  hashWithSalt salt = H.hashWithSalt salt . fname
+  {-# INLINE hashWithSalt #-}
+
 
 -- -- | Named predicate
 -- --
@@ -247,6 +265,7 @@ instance Ord (Fun a b) where
 -- | Variable
 newtype Var = Var T.Text
   deriving (Show, Eq, Ord)
+  deriving newtype (H.Hashable)
 
 
 -- | Extract the variable.
@@ -257,6 +276,7 @@ unVar (Var x) = x
 -- | Local variable name
 newtype LVar = LVar T.Text
   deriving (Show, Eq, Ord)
+  deriving newtype (H.Hashable)
 
 
 -- | Extract the variable.
@@ -304,7 +324,7 @@ data Op t
   -- with `Rec` from within `p`
   | Rec
   -- ^ Rec: call recursive pattern `p` defined with `Fix p`
-  deriving (Show, Eq, Ord)
+  deriving (Show, Eq, Ord, Generic, H.Hashable)
 
 
 -- | Condition expression
@@ -325,7 +345,7 @@ data Cond t
 --   -- ^ Always True
 --   | IsTrue t
 --   -- ^ Check if the given Boolean (predicate) pattern is satisfied
-  deriving (Show, Eq, Ord)
+  deriving (Show, Eq, Ord, Generic, H.Hashable)
 
 
 -- | Pattern expression
@@ -334,7 +354,7 @@ data Pattern
   -- ^ Item pattern
   | O (Op Pattern)
   -- ^ Operation pattern
-  deriving (Show, Eq, Ord)
+  deriving (Show, Eq, Ord, Generic, H.Hashable)
 
 -- instance Show Pattern where
 --   show (P x) = show x
@@ -622,6 +642,26 @@ forEach xs m = do
     return $ do
       RWS.put state
       m x
+
+
+-- -- | A version of `forEach` which behaves like `foldM`.  Each matching is
+-- -- started from the current state.
+-- foldEach
+--   :: (Monad m)
+--   => (b -> a -> MatchT m b)
+--   -> b
+--   -> [a]
+--   -> MatchT m b
+-- foldEach m x0 xs0 = do
+--   state <- RWS.get
+--   go state x0 xs0
+--   where
+--     go state prev = \case
+--       [] -> return prev
+--       x:xs -> do
+--         RWS.put state
+--         y <- m prev x
+--         go state y xs
 
 
 -- | Run pattern matching computation with the underlying functions and
