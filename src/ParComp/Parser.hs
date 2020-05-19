@@ -93,8 +93,8 @@ addToChart x = do
 --     print x
   ST.modify' $ modL' chart (S.insert x)
   -- For each index (template)
-  tempKeys <- ST.gets $ getL indexMap
-  forM_ (M.keys tempKeys) $ \template -> do
+  tempIndex <- ST.gets $ getL indexMap
+  forM_ (M.toList tempIndex) $ \(template, index) -> do
 --     liftIO $ do
 --       T.putStr ">>> Template: "
 --       print template
@@ -102,8 +102,7 @@ addToChart x = do
       -- Match the item with the template
       U.match U.Lazy template x
       -- For each key
-      let keys = M.keys . fromJust $ M.lookup template tempKeys
-      U.forEach keys $ \key -> do
+      U.forEach (M.keys index) $ \key -> do
         -- Determine the value of the key
         val <- I.keyValFor key
 --         liftIO $ do
