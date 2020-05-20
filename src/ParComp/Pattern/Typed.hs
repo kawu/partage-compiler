@@ -124,7 +124,7 @@ class Patt (repr :: * -> *) where
 
   -- | Cast a predicate pattern as a condition
   -- isTrue  :: repr Bool -> repr Cond
-  eq      :: repr a -> repr a -> repr Bool
+  eq      :: Eq a => repr a -> repr a -> repr Bool
   and     :: repr Bool -> repr Bool -> repr Bool
   or      :: repr Bool -> repr Bool -> repr Bool
 

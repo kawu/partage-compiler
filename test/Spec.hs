@@ -129,10 +129,6 @@ patternUnitTests = testGroup "(patterns)"
   , testCase "match (right unit) (Left 1)" $ do
       match (right unit) (Left 1 :: Either Int ()) @?= False
 
---   -- Check if illegal patterns can be used as conditions (e.g. local, var, any)
---   , testCase "illegal patterns as conditions" $ do
---       match (any `with` any) True @?= True
-
   -- Check match'
   , testCase "match' unit ()" $ do
       match' unit () @?= [()]
@@ -166,8 +162,18 @@ indexUnitTests = testGroup "(indexing)"
 
 
 otherUnitTests = testGroup "(other)"
-  [ testCase "List comparison (different length)" $
-      [1, 2, 3] `compare` [1,2] @?= GT
+  [ testCase "var \"b\" `with` var \"b\"" $ do
+      match (var "b" `with` var "b") True @=? True
+      match (var "b" `with` var "b") False @=? False
+
+--   , testCase "with function" $ do
+--       let app = Util.append :: Ty.Pattern (([Int], [Int]) -> [Int])
+--       match (any `with` eq app app) True @=? True
+
+--   -- Check if illegal patterns can be used as conditions (e.g. local, var, any)
+--   , testCase "illegal patterns as conditions" $ do
+--       match (any `with` any) True @?= True
+
   ]
 
 
