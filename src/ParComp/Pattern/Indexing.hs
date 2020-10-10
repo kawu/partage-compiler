@@ -349,12 +349,14 @@ addIndexInfo rule = do
         _ -> error "addIndexInfo: doesn't handle non-binary rules"
     , dirConseq = R.dirConseq rule
     }
-  where
-    getGroupTemplate :: [Lock] -> Template
-    getGroupTemplate xs =
-      case S.toList (S.fromList $ map lockTemplate xs) of
-        [temp] -> temp
-        _ -> error "addIndexInfo: unexpected number of templates"
+
+
+-- | Retrieve the template from the group of locks with the same template.
+getGroupTemplate :: [Lock] -> Template
+getGroupTemplate xs =
+  case S.toList (S.fromList $ map lockTemplate xs) of
+    [temp] -> temp
+    _ -> error "getGroupTemplate: unexpected number of templates"
 
 
 -- -- | Add index information to a directional rule.
@@ -364,6 +366,49 @@ addIndexInfo rule = do
 --   , R.otherAntes = map fst otherAntes
 --   , R.dirConseq = dirConseq
 --   }
+
+
+--------------------------------------------------
+-- Directional rule with index information (BIS)
+--------------------------------------------------
+
+
+-- -- | Index-related information
+-- data IndexInfo = IndexInfo
+--   { indexTemp :: Template
+--     -- ^ Index template
+--   , indexKeys :: S.Set Key
+--     -- ^ Index keys
+--   } deriving (Show, Eq, Ord)
+
+
+-- -- | Directional rule with index information assigned to other antecedents
+-- data DirRule' = DirRule'
+--   { mainAnte' :: Pattern
+--     -- ^ The main antecedent pattern
+--   , otherTemp :: Template
+--     -- ^ Index template for the other pattern
+--   , otherAnte :: M.Map Key Pattern
+--     -- ^ The other antecedent pattern, one per index key
+--   , dirConseq' :: Pattern
+--     -- ^ The rule's consequent
+--   } deriving (Show, Eq, Ord)
+
+
+-- -- | Add index information to a directional rule.
+-- addIndexInfo' :: (P.MonadIO m) => R.DirRule -> m DirRule'
+-- addIndexInfo' rule = do
+--   locks <- P.toListM (P.enumerate $ locksFor rule)
+--   let keys = [lockKey lock | lock <- locks]
+--   return $ DirRule'
+--     { mainAnte' = R.mainAnte rule
+--     , otherTemp = getGroupTemplate locks
+--     , otherAnte = case R.otherAntes rule of
+--         -- TODO: simplify the `other`!
+--         [other] -> M.fromList [(key, other) | key <- keys]
+--         _ -> error "addIndexInfo': doesn't handle non-binary rules"
+--     , dirConseq' = R.dirConseq rule
+--     }
 
 
 --------------------------------------------------
@@ -439,8 +484,70 @@ applyDirRule ruleName getIndex rule mainItem = do
         return result
     _ -> error "applyRule: doesn't handle non-binary rules"
 
-
   where
 
     -- For each element in the list
     each = P.Select . P.each
+
+
+-- -- | Apply directional rule.
+-- applyDirRule'
+--   :: (P.MonadIO m)
+--   => T.Text         -- ^ Rule's name
+--   -> (Template -> m Index)
+--                     -- ^ Function which retrieves the index
+--                     -- for a given template
+--   -> DirRule'
+--   -> Un.Rigit
+--   -> Un.MatchT m Un.Rigit
+-- applyDirRule' ruleName getIndex rule mainItem = do
+-- --   liftIO $ do
+-- --     T.putStr "@@@ Matching: "
+-- --     T.putStrLn ruleName
+-- -- --     T.putStr "@@@ Other Ante: "
+-- -- --     print $ Un.otherAntes rule !! 0
+-- --     -- print $ Un.mainAnte rule
+-- --     -- print mainItem
+--   Un.match Un.Strict (mainAnte' rule) mainItem
+--   let template = otherTemp rule
+-- --   liftIO $ do
+-- --     T.putStr "@@@ Template: "
+-- --     print template
+-- --     T.putStr "@@@ Key: "
+-- --     print key
+--   index <- Un.lift $ getIndex template
+--   (key, otherPatt) <- each . M.toList $ otherAnte rule
+--   let valItemMap = maybe M.empty id $ M.lookup key index
+-- --   liftIO $ do
+-- --     T.putStr "@@@ Index: "
+-- --     print valItemMap
+--   keyVal <- keyValFor key
+-- --   liftIO $ do
+-- --     T.putStr "@@@ Val: "
+-- --     print keyVal
+--   let otherItems = do
+--         maybe [] S.toList $ M.lookup keyVal valItemMap
+--   Un.forEach otherItems $ \otherItem -> do
+-- --     liftIO $ do
+-- --       T.putStr "@@@ Other: "
+-- --       print otherItem
+--     Un.match Un.Strict otherPatt otherItem
+-- --     liftIO $ do
+-- --       T.putStr "@@@ Closing: "
+-- --       print (Un.dirConseq rule)
+--     result <- Un.close (dirConseq' rule)
+--     -- We managed to apply a rule!
+-- --     liftIO $ do
+-- --       T.putStr "@@@ "
+-- --       T.putStr ruleName
+-- --       T.putStr ": "
+-- --       putStr $ show [mainItem, otherItem]
+-- --       T.putStr " => "
+-- --       print result
+--     -- Return the result
+--     return result
+--
+--   where
+--
+--     -- For each element in the list
+--     each = P.Select . P.each
