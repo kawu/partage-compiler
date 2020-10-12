@@ -1,0 +1,8 @@
+cradle:
+  stack:
+    - path: "./src"
+      component: "partage-compiler:lib"
+    - path: "./test"
+      component: "partage-compiler:test:partage-compiler-test"
+    - path: "./benchmark"
+      component: "partage-compiler:bench:benchmark-examples"
