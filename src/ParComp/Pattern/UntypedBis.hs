@@ -17,7 +17,21 @@
 
 module ParComp.Pattern.UntypedBis
   (
+  -- * Patterns
+    Patt (..)
+  , Cond (..)
+  , M
+  , C
 
+  -- * Matching
+  , MatchT
+  , runMatchT
+  , lift
+  , isMatch
+
+  , match
+  , close
+  , check
   ) where
 
 
@@ -25,7 +39,7 @@ import           Prelude hiding (const, map, any)
 
 import qualified System.Random as R
 
-import           Control.Monad (guard, void, forM)
+import           Control.Monad (guard, void, forM_)
 import qualified Control.Monad.RWS.Strict as RWS
 import           Control.Applicative (Alternative, (<|>), empty)
 
@@ -43,7 +57,8 @@ import qualified Data.Text as T
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 
-import           ParComp.Item (Item (..))
+import qualified ParComp.Item as I
+import           ParComp.Item (Item)
 
 import           Debug.Trace (trace)
 
@@ -140,13 +155,23 @@ data Patt t where
   -- patterns.  `Choice` provides non-determinism in pattern matching.
   Choice  :: Patt t -> Patt t -> Patt t
 
-  -- | Construct a product expression
-  CoVec   :: A.Array (Patt C) -> Patt C
-  -- | Construct a tagged expression
-  CoTag   :: Int -> Patt C -> Patt C
+  -- TODO: Eventually, we would like to use Vec and Tag only within the
+  -- constructing context; for matching, Select and Focus should be used
+  -- instead.
 
-  -- | Apply function to a patter
+  -- | Product pattern
+  Vec     :: A.Array (Patt t) -> Patt t
+  -- | Tagged pattern
+  Tag     :: Int -> Patt t -> Patt t
+
+  -- | Apply function to a pattern
   Apply   :: FunName -> Patt C -> Patt C
+  -- | Pattern assignment
+  Assign  :: Patt M -> Patt C -> Patt t
+
+  -- NOTE: Pattern assignment can be seen as a uni-directional analog of
+  -- equality constraint, in which the right-hand side is a constructing pattern
+  -- and the left-hand side is a matching pattern.
 
   -- | Pattern guard
   Guard   :: Cond -> Patt M
@@ -337,37 +362,28 @@ _toListT m h =
     lift $ h x
 
 
--- -- | Check if the pattern matches with the given item.
--- isMatch :: (P.MonadIO m) => Patt t -> Item -> m Bool
--- isMatch p x =
---   not <$> P.null (P.enumerate (doMatch p x))
---
---
--- -- | Perform pattern matching and generate the list of possible global variable
--- -- binding environments which satisfy the match.
--- --
--- -- TODO: This looks like a specialized version of toListT.  Should be
--- -- implemented in terms of it?
--- --
--- doMatch :: (P.MonadIO m) => Patt t -> Item -> P.ListT m Item
--- doMatch p x = do
---   P.Select $
---     _doMatch p x P.yield
---
---
--- -- | Lower-level handler-based `doMatch`.
--- _doMatch
---   :: (P.MonadIO m)
---   => Patt t
---   -> Item
---   -> (Item -> m ()) -- ^ Monadic handler
---   -> m ()
--- _doMatch p x h =
---   runMatchT $ do
---     y <- match p x
---     lift $ h y
---     -- e <- RWS.gets $ getL genv
---     -- lift $ h e
+-- | Check if the pattern matches with the given item.
+isMatch :: (P.MonadIO m) => Patt M -> Item -> m Bool
+isMatch p x =
+  not <$> P.null (P.enumerate (doMatch p x))
+
+
+-- | Perform pattern matching and generate the list of possible global variable
+-- binding environments which satisfy the match.
+doMatch :: (P.MonadIO m) => Patt M -> Item -> P.ListT m ()
+doMatch p x = do
+  P.Select $
+    _doMatch p x P.yield
+
+
+-- | Lower-level handler-based `doMatch`.
+_doMatch
+  :: (P.MonadIO m)
+  => Patt M
+  -> Item
+  -> (() -> m ()) -- ^ Monadic handler
+  -> m ()
+_doMatch p x h = _toListT (match p x) h
 
 
 --------------------------------------------------
@@ -383,10 +399,10 @@ match p it =
     Any -> pure ()
     Const it' -> guard $ it' == it
     Select ix p' -> case it of
-      Vec v -> match p' (A.indexArray v ix)
+      I.Vec v -> match p' (A.indexArray v ix)
       _ -> error "match Select with non-product item"
     Focus ix p' -> case it of
-      Tag ix' it' -> do
+      I.Tag ix' it' -> do
         guard $ ix == ix'
         match p' it'
     Choice p1 p2 -> do
@@ -395,6 +411,23 @@ match p it =
       match x it
       match y it
     Guard c -> check c
+    Vec v1 -> case it of
+      I.Vec v2 -> do
+        let n = A.sizeofArray v1
+            m = A.sizeofArray v2
+        if n /= m
+           then error $ "match fail due to length mismatch: " ++ show (v1, v2)
+           else return ()
+        forM_ [0..n-1] $ \k -> do
+          match (A.indexArray v1 k) (A.indexArray v2 k)
+      _ -> error "match Vec with non-product item"
+    Tag k x -> case it of
+      I.Tag k' y -> do
+        guard $ k == k'
+        match x y
+    Assign p q -> do
+      x <- close q
+      match p x
 
 
 -- | Check a condition expression.
@@ -435,8 +468,8 @@ close p =
     Choice p1 p2 ->
       -- NB: `alt` is not necessary, because `close` doesn't modify the state
       close p1 <|> close p2
-    CoVec v -> Vec <$> mapM close v
-    CoTag k p' -> Tag k <$> close p'
+    Vec v -> I.Vec <$> mapM close v
+    Tag k p' -> I.Tag k <$> close p'
     Apply fname p' -> do
       f <- retrieveFun fname
       x <- close p'
