@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ViewPatterns #-}
 -- {-# LANGUAGE ScopedTypeVariables #-}
 
 
@@ -195,14 +196,10 @@ dot = nothing
 -- | Pattern to extract the non-terminal / terminal symbol of a node
 label :: Patt C -> Patt C
 label =
-  Apply $ Fun "label" (\x -> [go x])
+  Apply . Fun "label" $ \x -> [extract x]
   where
-    go :: I.Item -> I.Item
-    go node = case node of
-      -- Left (nonTerm, _nodeId)
-      I.Tag 0 (I.Vec v) -> A.indexArray v 0
-      -- Right term
-      I.Tag 1 x -> x
+    extract (I.unEither -> Left (I.unPair -> (x, _))) = x
+    extract (I.unEither -> Right x) = x
 -- label =
 --   fun (Fun "label" nodeLabel)
 --   where
@@ -244,7 +241,7 @@ complete =
     leftP = item (rule v_A v_As) (span v_i v_j)
       `Seq` Assign
                 (pair v_alpha (dot .: just v_B .: v_beta))
-                (Apply splitAtDot v_As)
+                (splitAtDot v_As)
 
 --     -- First antecendent
 --     leftP = item
@@ -268,7 +265,6 @@ complete =
     -- Side condition
     condP = Eq (label v_B) (label v_C)
 
---
 --     -- Side condition
 --     condP = eq
 --       (map label v_B)
@@ -418,34 +414,69 @@ complete =
 infixr 5 .:
 
 
-
--- -- | Split a rule's body at the dot
--- -- TODO: Need to register the function first!
--- -- splitAtDot :: Patt repr => repr (Body -> (Body, Body))
+-- -- | Split a list at
 -- splitAtDot :: Patt C -> Patt C
--- splitAtDot = Apply "splitAtDot"
+-- splitAtDot = Apply . Fun "splitAtDot" $ \xs ->
+--   let (ls, rs) = go xs
+--    in [I.Vec $ A.fromListN 2 [ls, rs]]
+--   where
+--     go :: I.Item -> (I.Item, I.Item)
+--     go list = case list of
+--       I.Tag 0 _ -> (nil, nil)
+--       I.Tag 1 (I.Vec v) ->
+--         if x == I.Tag 0 I.Unit
+--         then (nil, list)
+--         else let (pref, suff) = go xs
+--               in (cons x pref, suff)
+--         where
+--           x = A.indexArray v 0
+--           xs = A.indexArray v 1
+--     nil = I.Tag 0 I.Unit
+--     cons x xs =
+--       I.Tag 1 . I.Vec $ A.fromListN 2 [x, xs]
 
 
--- | Split a list at
-splitAtDot :: Fun
-splitAtDot = Fun "splitAtDot" $ \xs ->
-  let (ls, rs) = go xs
-   in [I.Vec $ A.fromListN 2 [ls, rs]]
+splitAtDot :: Patt C -> Patt C
+splitAtDot p = apply splitAt (Const I.nothing :: Patt C) p
+
+
+-- | Split a list at a given element
+splitAt :: Fun
+splitAt =
+
+  Fun "splitAt" $ squeeze doit
+
   where
-    go :: I.Item -> (I.Item, I.Item)
-    go list = case list of
-      I.Tag 0 _ -> (nil, nil)
-      I.Tag 1 (I.Vec v) ->
-        if x == I.Tag 0 I.Unit
-        then (nil, list)
-        else let (pref, suff) = go xs
-              in (cons x pref, suff)
-        where
-          x = A.indexArray v 0
-          xs = A.indexArray v 1
-    nil = I.Tag 0 I.Unit
-    cons x xs =
-      I.Tag 1 . I.Vec $ A.fromListN 2 [x, xs]
+
+    doit at xs =
+      let (ls, rs) = go at xs
+       in [I.pair ls rs]
+
+    go :: I.Item -> I.Item -> (I.Item, I.Item)
+    go at list = I.list'
+      (I.nil, I.nil)
+      (\x xs ->
+         if x == at
+         then (I.nil, list)
+         else
+           let (pref, suff) = go at xs
+            in (I.cons x pref, suff)
+      ) list
+
+
+--     go list = case list of
+--       I.Tag 0 _ -> (nil, nil)
+--       I.Tag 1 (I.Vec v) ->
+--         if x == I.Tag 0 I.Unit
+--         then (nil, list)
+--         else let (pref, suff) = go xs
+--               in (cons x pref, suff)
+--         where
+--           x = A.indexArray v 0
+--           xs = A.indexArray v 1
+--     nil = I.Tag 0 I.Unit
+--     cons x xs =
+--       I.Tag 1 . I.Vec $ A.fromListN 2 [x, xs]
 
 
 -- -- | Split a rule's body at the dot.
@@ -462,23 +493,27 @@ splitAtDot = Fun "splitAtDot" $ \xs ->
 --     go [] = ([], [])
 
 
+-- -- | Append two lists
+-- append :: Fun
+-- append =
+--   Fun "append" $ squeeze (\xs ys -> [go xs ys])
+--   where
+--     go :: I.Item -> I.Item -> I.Item
+--     go xs ys =
+--       case xs of
+--         I.Tag 0 _ -> ys
+--         I.Tag 1 (I.Vec v) -> I.Tag 1 . I.Vec $
+--           let x = A.indexArray v 0
+--               xs' = A.indexArray v 1
+--            in A.fromListN 2 [x, go xs' ys]
+
+
 -- | Append two lists
 append :: Fun
 append =
-  Fun "append" $ squeeze (\xs ys -> [go xs ys])
-  where
-    go :: I.Item -> I.Item -> I.Item
-    go xs ys =
-      case xs of
-        I.Tag 0 _ -> ys
-        I.Tag 1 (I.Vec v) -> I.Tag 1 . I.Vec $
-          let x = A.indexArray v 0
-              xs' = A.indexArray v 1
-           in A.fromListN 2 [x, go xs' ys]
+  Fun "append" $ squeeze (\xs ys -> [I.append xs ys])
 
 
---
---
 -- -- | Match any suffix that satisfies the given suffix pattern.
 -- suffix :: (Patt repr) => repr [a] -> repr [a]
 -- suffix p = fix $ choice p (any .: rec)
