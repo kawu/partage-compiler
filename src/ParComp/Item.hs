@@ -6,9 +6,17 @@
 
 
 module ParComp.Item
-  ( Item (..)
+  (
+
+  -- * Item
+    Item (..)
+
+  -- * Common patterns (TODO: move elsewhere?)
   , true
   , false
+
+  -- * Encoding
+  , IsItem (..)
   ) where
 
 

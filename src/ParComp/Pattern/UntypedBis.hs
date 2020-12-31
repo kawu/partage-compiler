@@ -117,12 +117,12 @@ import           Debug.Trace (trace)
 
 -- | Variable
 newtype Var = Var {unVar :: T.Text}
-   deriving (Show, Eq, Ord)
+   deriving (Show, Eq, Ord, IsString)
 
 
 -- | Function name
 newtype FunName = FunName {unFunName :: T.Text}
-  deriving (Show, Eq, Ord)
+  deriving (Show, Eq, Ord, IsString)
 
 
 -- | Matching pattern
