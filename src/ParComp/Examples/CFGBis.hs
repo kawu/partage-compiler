@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
+-- {-# LANGUAGE ScopedTypeVariables #-}
 
 
 -- | Context-free grammar parsing
@@ -23,7 +24,7 @@ import qualified Data.Primitive.Array as A
 import qualified ParComp.Item as I
 import qualified ParComp.Pattern.UntypedBis as Un
 import           ParComp.Pattern.UntypedBis
-  (Patt (..), M, C, Cond (..))
+  (Patt (..), M, C, Cond (..), Fun (..), Squeeze (..), Apply (..))
 import qualified ParComp.Pattern.RuleBis as R
 import           ParComp.Pattern.RuleBis (Rule (..))
 
@@ -192,9 +193,16 @@ dot = nothing
 
 
 -- | Pattern to extract the non-terminal / terminal symbol of a node
--- TODO: Need to register the function first!
 label :: Patt C -> Patt C
-label = Apply "label"
+label =
+  Apply $ Fun "label" (\x -> [go x])
+  where
+    go :: I.Item -> I.Item
+    go node = case node of
+      -- Left (nonTerm, _nodeId)
+      I.Tag 0 (I.Vec v) -> A.indexArray v 0
+      -- Right term
+      I.Tag 1 x -> x
 -- label =
 --   fun (Fun "label" nodeLabel)
 --   where
@@ -236,7 +244,7 @@ complete =
     leftP = item (rule v_A v_As) (span v_i v_j)
       `Seq` Assign
                 (pair v_alpha (dot .: just v_B .: v_beta))
-                (splitAtDot v_As)
+                (Apply splitAtDot v_As)
 
 --     -- First antecendent
 --     leftP = item
@@ -249,7 +257,7 @@ complete =
 
     -- Second antecendent
     rightP = item
-      (rule v_C (suffix (dot .: nil)))
+      (rule v_C (suffixP (dot .: nil)))
       (span v_j v_k)
 
 --     -- Second antecendent
@@ -269,9 +277,9 @@ complete =
     -- Consequent
     downP = item
       (rule v_A
-        (append
-          v_alpha
-          (just v_B .: dot .: v_beta)
+        (apply append
+          (v_alpha :: Patt C)
+          ((just v_B .: dot .: v_beta) :: Patt C)
         )
       )
       (span v_i v_k)
@@ -411,16 +419,33 @@ infixr 5 .:
 
 
 
--- | Split a rule's body at the dot
--- TODO: Need to register the function first!
--- splitAtDot :: Patt repr => repr (Body -> (Body, Body))
-splitAtDot :: Patt C -> Patt C
-splitAtDot = Apply "splitAtDot"
+-- -- | Split a rule's body at the dot
+-- -- TODO: Need to register the function first!
+-- -- splitAtDot :: Patt repr => repr (Body -> (Body, Body))
+-- splitAtDot :: Patt C -> Patt C
+-- splitAtDot = Apply "splitAtDot"
 
 
--- | Append two lists
-append :: Patt C -> Patt C -> Patt C
-append = undefined
+-- | Split a list at
+splitAtDot :: Fun
+splitAtDot = Fun "splitAtDot" $ \xs ->
+  let (ls, rs) = go xs
+   in [I.Vec $ A.fromListN 2 [ls, rs]]
+  where
+    go :: I.Item -> (I.Item, I.Item)
+    go list = case list of
+      I.Tag 0 _ -> (nil, nil)
+      I.Tag 1 (I.Vec v) ->
+        if x == I.Tag 0 I.Unit
+        then (nil, list)
+        else let (pref, suff) = go xs
+              in (cons x pref, suff)
+        where
+          x = A.indexArray v 0
+          xs = A.indexArray v 1
+    nil = I.Tag 0 I.Unit
+    cons x xs =
+      I.Tag 1 . I.Vec $ A.fromListN 2 [x, xs]
 
 
 -- -- | Split a rule's body at the dot.
@@ -435,6 +460,23 @@ append = undefined
 --           let (pref, suff) = go xs
 --            in (x:pref, suff)
 --     go [] = ([], [])
+
+
+-- | Append two lists
+append :: Fun
+append =
+  Fun "append" $ squeeze (\xs ys -> [go xs ys])
+  where
+    go :: I.Item -> I.Item -> I.Item
+    go xs ys =
+      case xs of
+        I.Tag 0 _ -> ys
+        I.Tag 1 (I.Vec v) -> I.Tag 1 . I.Vec $
+          let x = A.indexArray v 0
+              xs' = A.indexArray v 1
+           in A.fromListN 2 [x, go xs' ys]
+
+
 --
 --
 -- -- | Match any suffix that satisfies the given suffix pattern.
@@ -443,7 +485,25 @@ append = undefined
 
 
 -- | Check if the item contains a given suffix.
--- TODO: Need to register the function first!
 -- suffix :: (Patt repr) => repr [a] -> repr [a]
-suffix :: Patt C -> Patt M
-suffix p = undefined
+suffixP :: Patt C -> Patt M
+suffixP p =
+  xs `Seq` Guard cond
+  where
+    xs = Label "xs"
+    cond = Eq (apply suffix p (xs :: Patt C)) (Const I.true)
+
+
+-- | Check if the item contains a given suffix.
+-- TODO: This could be definitely implemented more efficiently!
+suffix :: Fun
+suffix =
+  Fun "suffix" $ squeeze go
+  where
+    go :: I.Item -> I.Item -> [I.Item]
+    go xs ys =
+      if xs == ys
+      then pure I.true
+      else case ys of
+        I.Tag 0 _ -> pure I.false
+        I.Tag 1 (I.Vec v) -> go xs (A.indexArray v 1)

@@ -17,8 +17,13 @@
 
 module ParComp.Pattern.UntypedBis
   (
+  -- * Functions
+    Fun (..)
+  , Squeeze (..)
+  , Apply (..)
+
   -- * Patterns
-    Patt (..)
+  , Patt (..)
   , Cond (..)
   , M
   , C
@@ -68,46 +73,90 @@ import           Debug.Trace (trace)
 --------------------------------------------------
 
 
--- -- | Named function
+-- | Function name
+newtype FunName = FunName {unFunName :: T.Text}
+  deriving (Eq, Ord, IsString)
+
+instance Show FunName where
+  show = T.unpack . unFunName
+
+-- | Named function
+--
+-- We require that all function and predicate names are unique.
+data Fun = Fun
+  { fname :: FunName
+    -- ^ The function's name
+  , fbody :: Item -> [Item]
+    -- ^ The function itself (non-deterministic)
+  }
+
+instance Show Fun where
+  show Fun{..} = show fname
+
+instance Eq Fun where
+  x == y = fname x == fname y
+
+instance Ord Fun where
+  x `compare` y = fname x `compare` fname y
+
+
+class Squeeze f where
+  squeeze :: f -> (Item -> [Item])
+
+class Apply f where
+  apply :: f
+
+
+instance Squeeze (Item -> [Item]) where
+  squeeze f = f
+
+instance Apply (Fun -> Patt C -> Patt C) where
+  apply f = Apply f
+
+
+instance Squeeze (Item -> Item -> [Item]) where
+  squeeze f = \x -> case x of
+    I.Vec v -> f (A.indexArray v 0) (A.indexArray v 1)
+    _ -> error "Squeeze 2-arg: arguments squeezed incorrectly"
+
+instance Apply (Fun -> Patt C -> Patt C -> Patt C) where
+  -- TODO: use `pair x y` (once available in this module)
+  apply f x y = Apply f . Vec $ A.fromListN 2 [x, y]
+
+
+-- instance MkFun (Item -> Item -> [Item]) where
+--   squeeze f = \x -> case x of
+--     I.Vec v -> f (A.indexArray v 0) (A.indexArray v 1)
+--     _ -> error "MkFun 2-arg: argument squeezed incorrectly"
+--   unsqueeze f x y = f . I.Vec $ A.fromListN 2 [x, y]
+--
+-- instance MkFun (Item -> Item -> Item -> [Item]) where
+--   squeeze f = \x -> case x of
+--     I.Vec v -> f (A.indexArray v 0) (A.indexArray v 1) (A.indexArray v 2)
+--     _ -> error "MkFun 3-arg: argument squeezed incorrectly"
+--   unsqueeze f x y z = f . I.Vec $ A.fromListN 3 [x, y, z]
+
+
+-- -- | Named predicate
 -- --
--- -- We require that all function and predicate names are unique.
--- data Fun a b = Fun
---   { fname :: T.Text
---     -- ^ The function's name
---   , fbody :: a -> [b]
---     -- ^ The function itself (non-deterministic)
+-- -- We require that all function and predicate names are unique.  (See the
+-- -- `guard` function in the `Typed` module to understand why a predicate
+-- -- should not have the same name as a function).
+-- data Pred a = Pred
+--   { pname :: T.Text
+--     -- ^ The predicate's name
+--   , pbody :: a -> Bool
+--     -- ^ The predicate itself
 --   }
 --
--- instance Show (Fun a b) where
---   show Fun{..} = T.unpack fname
+-- instance Show (Pred a) where
+--   show Pred{..} = T.unpack pname
 --
--- instance Eq (Fun a b) where
---   x == y = fname x == fname y
+-- instance Eq (Pred a) where
+--   x == y = pname x == pname y
 --
--- instance Ord (Fun a b) where
---   x `compare` y = fname x `compare` fname y
---
---
--- -- -- | Named predicate
--- -- --
--- -- -- We require that all function and predicate names are unique.  (See the
--- -- -- `guard` function in the `Typed` module to understand why a predicate should
--- -- -- not have the same name as a function).
--- -- data Pred a = Pred
--- --   { pname :: T.Text
--- --     -- ^ The predicate's name
--- --   , pbody :: a -> Bool
--- --     -- ^ The predicate itself
--- --   }
--- --
--- -- instance Show (Pred a) where
--- --   show Pred{..} = T.unpack pname
--- --
--- -- instance Eq (Pred a) where
--- --   x == y = pname x == pname y
--- --
--- -- instance Ord (Pred a) where
--- --   x `compare` y = pname x `compare` pname y
+-- instance Ord (Pred a) where
+--   x `compare` y = pname x `compare` pname y
 
 
 --------------------------------------------------
@@ -118,11 +167,6 @@ import           Debug.Trace (trace)
 -- | Variable
 newtype Var = Var {unVar :: T.Text}
    deriving (Show, Eq, Ord, IsString)
-
-
--- | Function name
-newtype FunName = FunName {unFunName :: T.Text}
-  deriving (Show, Eq, Ord, IsString)
 
 
 -- | Matching pattern
@@ -165,7 +209,8 @@ data Patt t where
   Tag     :: Int -> Patt t -> Patt t
 
   -- | Apply function to a pattern
-  Apply   :: FunName -> Patt C -> Patt C
+  -- Apply   :: FunName -> Patt C -> Patt C
+  Apply   :: Fun -> Patt C -> Patt C
   -- | Pattern assignment
   Assign  :: Patt M -> Patt C -> Patt t
 
@@ -211,8 +256,8 @@ type Env v = M.Map v Item
 data PMState = PMState
   { _genv :: Env Var
     -- ^ Variable binding environment
-  , _funMap :: M.Map FunName (Item -> [Item])
-    -- ^ Registered functions
+--    , _funMap :: M.Map FunName (Item -> [Item])
+--      -- ^ Registered functions
 --   , _lenv :: Env LVar
 --     -- ^ Local variable binding environment
 --   , _fix :: Maybe Pattern
@@ -280,7 +325,7 @@ runMatchT
   -> m ()
 runMatchT m = void $
   RWS.evalRWST (P.runListT m) ()
-    (PMState M.empty M.empty)
+    (PMState M.empty)
 
 
 -- | Look up the value assigned to the global variable.
@@ -316,21 +361,21 @@ bindVar v it = do
     Just it' -> guard $ it == it'
 
 
--- | Retrieve the function with a given name.  The function with the name must
--- exist, otherwise `retrieveFun` thorws an error.
-retrieveFun
-  :: (Monad m)
-  => FunName
-  -> MatchT m (Item -> [Item])
-retrieveFun funName = do
-  mayFun <- RWS.gets (M.lookup funName . getL funMap)
-  case mayFun of
-    Nothing -> error $ concat
-      [ "retrieveFun: function with name '"
-      , T.unpack $ unFunName funName
-      , "' does not exist"
-      ]
-    Just fun -> return fun
+--  -- | Retrieve the function with a given name.  The function with the name must
+--  -- exist, otherwise `retrieveFun` thorws an error.
+--  retrieveFun
+--    :: (Monad m)
+--    => FunName
+--    -> MatchT m (Item -> [Item])
+--  retrieveFun funName = do
+--    mayFun <- RWS.gets (M.lookup funName . getL funMap)
+--    case mayFun of
+--      Nothing -> error $ concat
+--        [ "retrieveFun: function with name '"
+--        , T.unpack $ unFunName funName
+--        , "' does not exist"
+--        ]
+--      Just fun -> return fun
 
 
 --------------------------------------------------
@@ -470,10 +515,11 @@ close p =
       close p1 <|> close p2
     Vec v -> I.Vec <$> mapM close v
     Tag k p' -> I.Tag k <$> close p'
-    Apply fname p' -> do
-      f <- retrieveFun fname
+    -- Apply fname p' -> do
+    Apply f p' -> do
+      -- f <- retrieveFun fname
       x <- close p'
-      y <- each $ f x
+      y <- each $ fbody f x
       return y
 
 
@@ -491,3 +537,8 @@ each = P.Select . P.each
 -- one of them succeeds. Returns the value of the succeeding action.
 choice :: Alternative f => [f a] -> f a
 choice = foldr (<|>) empty
+
+
+-- -- | TODO
+-- apply :: MkFun f => Fun -> (f -> Patt C)
+-- apply Fun{..} = fbody
