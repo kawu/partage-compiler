@@ -19,14 +19,14 @@ module ParComp.Pattern.UntypedBis
   (
   -- * Functions
     Fun (..)
-  , Squeeze (..)
-  , Apply (..)
+--   , Squeeze (..)
+--   , Apply (..)
 
   -- * Patterns
   , Patt (..)
   , Cond (..)
-  , M
-  , C
+--   , M
+--   , C
 
   -- * Matching
   , MatchT
@@ -63,7 +63,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 
 import qualified ParComp.Item as I
-import           ParComp.Item (Item)
+import           ParComp.Item (Term (..), Item (..))
 
 import           Debug.Trace (trace)
 
@@ -100,28 +100,28 @@ instance Ord Fun where
   x `compare` y = fname x `compare` fname y
 
 
-class Squeeze f where
-  squeeze :: f -> (Item -> [Item])
-
-class Apply f where
-  apply :: f
-
-
-instance Squeeze (Item -> [Item]) where
-  squeeze f = f
-
-instance Apply (Fun -> Patt C -> Patt C) where
-  apply f = Apply f
+--  class Squeeze f where
+--    squeeze :: f -> (Item -> [Item])
+--
+-- class Apply f where
+--   apply :: f
 
 
-instance Squeeze (Item -> Item -> [Item]) where
-  squeeze f = \x -> case x of
-    I.Vec v -> f (A.indexArray v 0) (A.indexArray v 1)
-    _ -> error "Squeeze 2-arg: arguments squeezed incorrectly"
+-- instance Squeeze (Item -> [Item]) where
+--   squeeze f = f
+--
+-- instance Apply (Fun -> Patt C -> Patt C) where
+--   apply f = Apply f
 
-instance Apply (Fun -> Patt C -> Patt C -> Patt C) where
-  -- TODO: use `pair x y` (once available in this module)
-  apply f x y = Apply f . Vec $ A.fromListN 2 [x, y]
+
+-- instance Squeeze (Item -> Item -> [Item]) where
+--   squeeze f = \x -> case x of
+--     I.Vec v -> f (A.indexArray v 0) (A.indexArray v 1)
+--     _ -> error "Squeeze 2-arg: arguments squeezed incorrectly"
+--
+-- instance Apply (Fun -> Patt C -> Patt C -> Patt C) where
+--   -- TODO: use `pair x y` (once available in this module)
+--   apply f x y = Apply f . Vec $ A.fromListN 2 [x, y]
 
 
 -- instance MkFun (Item -> Item -> [Item]) where
@@ -169,78 +169,81 @@ newtype Var = Var {unVar :: T.Text}
    deriving (Show, Eq, Ord, IsString)
 
 
--- | Matching pattern
-data M
-
--- | Constructing pattern
-data C
+-- -- | Matching pattern
+-- data M
+--
+-- -- | Constructing pattern
+-- data C
 
 
 -- | Pattern matching/constructing expression
-data Patt t where
+data Op e where
 
   -- | Bind the current expression to a given variable
-  Label   :: Var -> Patt t
-  -- | Match a constant item expression
-  Const   :: Item -> Patt t
+  Label   :: Var -> Op e
+--   -- | Match a constant item expression
+--   Const   :: Item -> Patt t
   -- | Match any item expression (wildcard pattern)
-  Any     :: Patt M
+  Any     :: Op e
 
   -- | Select a given branch of a tagged expression
-  Select  :: Int -> Patt M -> Patt M
+  Select  :: Int -> e -> Op e
   -- | Focus on a given branch of a product expression
-  Focus   :: Int -> Patt M -> Patt M
+  Focus   :: Int -> e -> Op e
 
   -- | Sequence: `Seq x y` first matches `x`, then `y`, with the item.  The
   -- result of the match with `y` is taken to be the result of the entire
   -- expression.
-  Seq     :: Patt t -> Patt t -> Patt t
+  Seq     :: e -> e -> Op e
   -- | Choice: `Choice x y` matches items which match either of the two
   -- patterns.  `Choice` provides non-determinism in pattern matching.
-  Choice  :: Patt t -> Patt t -> Patt t
-
-  -- TODO: Eventually, we would like to use Vec and Tag only within the
-  -- constructing context; for matching, Select and Focus should be used
-  -- instead.
-
-  -- | Product pattern
-  Vec     :: A.Array (Patt t) -> Patt t
-  -- | Tagged pattern
-  Tag     :: Int -> Patt t -> Patt t
+  Choice  :: e -> e -> Op e
 
   -- | Apply function to a pattern
   -- Apply   :: FunName -> Patt C -> Patt C
-  Apply   :: Fun -> Patt C -> Patt C
+  Apply   :: Fun -> e -> Op e
   -- | Pattern assignment
-  Assign  :: Patt M -> Patt C -> Patt t
+  Assign  :: e -> e -> Op e
 
   -- NOTE: Pattern assignment can be seen as a uni-directional analog of
   -- equality constraint, in which the right-hand side is a constructing pattern
   -- and the left-hand side is a matching pattern.
 
   -- | Pattern guard
-  Guard   :: Cond -> Patt M
+  Guard   :: Cond e -> Op e
 
-deriving instance Show (Patt t)
-deriving instance Eq (Patt t)
-deriving instance Ord (Patt t)
+  deriving (Show, Eq, Ord)
+
+-- deriving instance Show (Patt t)
+-- deriving instance Eq (Patt t)
+-- deriving instance Ord (Patt t)
 
 
 -- | Condition expression
 --
 -- Note that condition expression should contain no free variables, nor wildcard
 -- patterns.  This is because side conditions are not matched against items.
-data Cond where
+data Cond e where
   -- | Equality check between two constructing pattern expressions
-  Eq    :: Patt C -> Patt C -> Cond
+  Eq    :: e -> e -> Cond e
   -- | Logical conjunction
-  And   :: Cond -> Cond -> Cond
+  And   :: Cond e -> Cond e -> Cond e
   -- | Logical disjunction
-  Or    :: Cond -> Cond -> Cond
+  Or    :: Cond e -> Cond e -> Cond e
+  deriving (Show, Eq, Ord)
 
-deriving instance Show Cond
-deriving instance Eq Cond
-deriving instance Ord Cond
+-- deriving instance Show Cond
+-- deriving instance Eq Cond
+-- deriving instance Ord Cond
+
+
+-- | Pattern expression
+data Patt
+  = P (Term Patt)
+  -- ^ Term pattern
+  | O (Op Patt)
+  -- ^ Operation pattern
+  deriving (Show, Eq, Ord)
 
 
 --------------------------------------------------
@@ -408,14 +411,14 @@ _toListT m h =
 
 
 -- | Check if the pattern matches with the given item.
-isMatch :: (P.MonadIO m) => Patt M -> Item -> m Bool
+isMatch :: (P.MonadIO m) => Patt -> Item -> m Bool
 isMatch p x =
   not <$> P.null (P.enumerate (doMatch p x))
 
 
 -- | Perform pattern matching and generate the list of possible global variable
 -- binding environments which satisfy the match.
-doMatch :: (P.MonadIO m) => Patt M -> Item -> P.ListT m ()
+doMatch :: (P.MonadIO m) => Patt -> Item -> P.ListT m ()
 doMatch p x = do
   P.Select $
     _doMatch p x P.yield
@@ -424,7 +427,7 @@ doMatch p x = do
 -- | Lower-level handler-based `doMatch`.
 _doMatch
   :: (P.MonadIO m)
-  => Patt M
+  => Patt
   -> Item
   -> (() -> m ()) -- ^ Monadic handler
   -> m ()
@@ -437,17 +440,33 @@ _doMatch p x h = _toListT (match p x) h
 
 
 -- | Match a pattern with a given item.
-match :: (P.MonadIO m) => Patt M -> Item -> MatchT m ()
-match p it =
+match :: (P.MonadIO m) => Patt -> Item -> MatchT m ()
+match (P ip) (I it) =
+  case (ip, it) of
+    (Unit, Unit) -> pure ()
+    (Sym x, Sym y) -> guard $ x == y
+    (Tag k x, Tag k' y) -> do
+      guard $ k == k'
+      match x y
+    (Vec v1, Vec v2) -> do
+      let n = A.sizeofArray v1
+          m = A.sizeofArray v2
+      if n /= m
+         then error $ "match fail due to length mismatch: " ++ show (v1, v2)
+         else return ()
+      forM_ [0..n-1] $ \k -> do
+        match (A.indexArray v1 k) (A.indexArray v2 k)
+    _ -> error $ "match fail: " ++ show (ip, it)
+match (O p) it =
   case p of
     Label x -> bindVar x it
     Any -> pure ()
-    Const it' -> guard $ it' == it
+    -- Const it' -> guard $ it' == it
     Select ix p' -> case it of
-      I.Vec v -> match p' (A.indexArray v ix)
+      I (Vec v) -> match p' (A.indexArray v ix)
       _ -> error "match Select with non-product item"
     Focus ix p' -> case it of
-      I.Tag ix' it' -> do
+      I (Tag ix' it') -> do
         guard $ ix == ix'
         match p' it'
     Choice p1 p2 -> do
@@ -456,27 +475,13 @@ match p it =
       match x it
       match y it
     Guard c -> check c
-    Vec v1 -> case it of
-      I.Vec v2 -> do
-        let n = A.sizeofArray v1
-            m = A.sizeofArray v2
-        if n /= m
-           then error $ "match fail due to length mismatch: " ++ show (v1, v2)
-           else return ()
-        forM_ [0..n-1] $ \k -> do
-          match (A.indexArray v1 k) (A.indexArray v2 k)
-      _ -> error "match Vec with non-product item"
-    Tag k x -> case it of
-      I.Tag k' y -> do
-        guard $ k == k'
-        match x y
     Assign p q -> do
       x <- close q
       match p x
 
 
 -- | Check a condition expression.
-check :: (P.MonadIO m) => Cond -> MatchT m ()
+check :: (P.MonadIO m) => Cond Patt -> MatchT m ()
 check = \case
   Eq px py  -> do
     x <- close px
@@ -503,18 +508,21 @@ check = \case
 --
 -- Note that `close` should not modify the underlying state/environment.
 --
-close :: (P.MonadIO m) => Patt C -> MatchT m Item
-close p =
+close :: (P.MonadIO m) => Patt -> MatchT m Item
+close (P p) =
+  case p of
+    Unit -> pure (I Unit)
+    Sym x -> pure . I $ Sym x
+    Vec v -> I . Vec <$> mapM close v
+    Tag k p' -> I . Tag k <$> close p'
+close (O p) =
   case p of
     Label v -> retrieveVar v
-    Const it -> pure it
-    -- TODO: What's the point of closing the first pattern?
+    -- Const it -> pure it
     Seq p1 p2 -> close p1 >> close p2
     Choice p1 p2 ->
       -- NB: `alt` is not necessary, because `close` doesn't modify the state
       close p1 <|> close p2
-    Vec v -> I.Vec <$> mapM close v
-    Tag k p' -> I.Tag k <$> close p'
     -- Apply fname p' -> do
     Apply f p' -> do
       -- f <- retrieveFun fname

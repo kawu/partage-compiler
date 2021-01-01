@@ -111,7 +111,7 @@ chartParse
     -- ^ Axiom-generated items
   -> M.Map T.Text R.Rule
     -- ^ Named deduction rules
-  -> Un.Patt Un.M
+  -> Un.Patt
     -- ^ Pattern the final item should match
   -> IO (Maybe I.Item)
 chartParse baseItems ruleMap finalPatt =

@@ -1,6 +1,8 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DerivingStrategies #-}
 
 
 -- | Chart item representation
@@ -10,7 +12,8 @@ module ParComp.Item
   (
 
   -- * Item
-    Item (..)
+    Term (..)
+  , Item (..)
 
   -- * Data types
   -- ** Boolean
@@ -18,8 +21,9 @@ module ParComp.Item
   , false
   , unBool
   , bool'
-  -- ** Tuple
+  -- ** Tuples
   , pair
+  , pair'
   , unPair
   , triple
   , unTriple
@@ -38,9 +42,11 @@ module ParComp.Item
   , list'
   , unList
   , append
+  , suffix
 
   -- * Encoding
   , IsItem (..)
+  , encodeI
   ) where
 
 
@@ -51,22 +57,33 @@ import qualified Data.Primitive.Array as A
 
 
 --------------------------------------------------
+-- Term
+--------------------------------------------------
+
+
+-- | Term expression
+data Term expr where
+  Unit  :: Term expr
+  Sym   :: {-# UNPACK #-} !T.Text -> Term expr
+  -- | Non-empty vector of expressions (to represent product types)
+  -- (TODO: or maybe we could/should use it to represent unit, too?)
+  Vec   :: !(A.Array expr) -> Term expr
+  -- | Tagged expression (to represent sum types)
+  Tag   :: {-# UNPACK #-} !Int -> expr -> Term expr
+--   Num   :: {-# UNPACK #-} !Int -> Term expr
+--   -- ^ Integral number
+  deriving (Show, Eq, Ord)
+
+
+--------------------------------------------------
 -- Item
 --------------------------------------------------
 
 
--- | Chart item
-data Item where
-  Unit  :: Item
-  Sym   :: {-# UNPACK #-} !T.Text -> Item
-  -- | Non-empty vector of expressions (to represent product types)
-  -- (TODO: or maybe we could/should use it to represent unit, too?)
-  Vec   :: !(A.Array Item) -> Item
-  -- | Tagged expression (to represent sum types)
-  Tag   :: {-# UNPACK #-} !Int -> Item -> Item
---   Num   :: {-# UNPACK #-} !Int -> Item expr
---   -- ^ Integral number
-  deriving (Show, Eq, Ord)
+-- | Item expression
+newtype Item = I {unI :: Term Item}
+  deriving (Eq, Ord)
+  deriving newtype (Show)
 
 
 --------------------------------------------------
@@ -75,18 +92,18 @@ data Item where
 
 
 -- | True
-true :: Item
-true = Tag 1 Unit
+true :: (Term e -> e) -> e
+true mk = mk . Tag 1 $ mk Unit
 
 -- | False
-false :: Item
-false = Tag 0 Unit
+false :: (Term e -> e) -> e
+false mk = mk . Tag 0 $ mk Unit
 
 -- | Expression `bool' f t b` yields `t` if `b` is `True`, and `f` otherwise.
 bool' :: a -> a -> Item -> a
 bool' f t b =
   case b of
-    Tag k _ -> case k of
+    I (Tag k _) -> case k of
       0 -> f
       1 -> t
 
@@ -96,58 +113,62 @@ unBool = bool' False True
 
 
 -- | Expression `pair x y` constructs a pair from `x` and `y`.
-pair :: Item -> Item -> Item
-pair x y = Vec $ A.fromListN 2 [x, y]
+pair :: (Term e -> e) -> e -> e -> e
+pair mk x y = mk . Vec $ A.fromListN 2 [x, y]
+
+-- | TODO
+pair' :: (Item -> Item -> a) -> Item -> a
+pair' f p = case p of
+  I (Vec v) -> f (A.indexArray v 0) (A.indexArray v 1)
+  _ -> error "pair': not a pair"
 
 -- | Deconstruct `pair x y` as `(x, y)`.
 unPair :: Item -> (Item, Item)
-unPair p = case p of
-  Vec v -> (A.indexArray v 0, A.indexArray v 1)
-  _ -> error "unPair: not a pair"
+unPair = pair' (,)
 
 
 -- | Expression `pair x y` constructs a pair from `x` and `y`.
-triple :: Item -> Item -> Item -> Item
-triple x y z = Vec $ A.fromListN 3 [x, y, z]
+triple :: (Term e -> e) -> e -> e -> e -> e
+triple mk x y z = mk . Vec $ A.fromListN 3 [x, y, z]
 
 -- | Deconstruct `pair x y` as `(x, y)`.
 unTriple :: Item -> (Item, Item, Item)
 unTriple p = case p of
-  Vec v -> (A.indexArray v 0, A.indexArray v 1, A.indexArray v 2)
+  I (Vec v) -> (A.indexArray v 0, A.indexArray v 1, A.indexArray v 2)
   _ -> error "unTriple: not a triple"
 
 
 -- | `Nothing`
-nothing :: Item
-nothing = Tag 0 Unit
+nothing :: (Term e -> e) -> e
+nothing mk = mk . Tag 0 $ mk Unit
 
 -- | `Just`
-just :: Item -> Item
-just = Tag 1
+just :: (Term e -> e) -> e -> e
+just mk = mk . Tag 1
 
 -- | Expression `maybe' n j m` yields `j x` if `m = just x`, and `n` otherwise.
 maybe' :: a -> (Item -> a) -> Item -> a
 maybe' n j m =
   case m of
-    Tag 0 _ -> n
-    Tag 1 x -> j x
+    I (Tag 0 _) -> n
+    I (Tag 1 x) -> j x
 
 
 -- | `Left`
-left :: Item -> Item
-left = Tag 0
+left :: (Term e -> e) -> e -> e
+left mk = mk . Tag 0
 
 -- | `Right`
-right :: Item -> Item
-right = Tag 1
+right :: (Term e -> e) -> e -> e
+right mk = mk . Tag 1
 
 -- | Expression `either' e l r` yields `l x` if `e = left x`, and `r y` if
 -- `e = right y`.
 either' :: (Item -> a) -> (Item -> a) -> Item -> a
 either' l r e =
   case e of
-    Tag 0 x -> l x
-    Tag 1 y -> r y
+    I (Tag 0 x) -> l x
+    I (Tag 1 y) -> r y
 
 
 -- | View of either
@@ -156,19 +177,19 @@ unEither = either' Left Right
 
 
 -- | `[]`
-nil :: Item
-nil = Tag 0 Unit
+nil :: (Term e -> e) -> e
+nil mk = mk . Tag 0 $ mk Unit
 
 -- | `x:xs`
-cons :: Item -> Item -> Item
-cons x xs = Tag 1 . Vec $ A.fromListN 2 [x, xs]
+cons :: (Term e -> e) -> e -> e -> e
+cons mk x xs = mk . Tag 1 . mk . Vec $ A.fromListN 2 [x, xs]
 
 -- | TODO
 list' :: a -> (Item -> Item -> a) -> Item -> a
 list' n c lst =
   case lst of
-    Tag 0 _ -> n
-    Tag 1 (Vec v) -> c (A.indexArray v 0) (A.indexArray v 1)
+    I (Tag 0 _) -> n
+    I (Tag 1 ( I (Vec v))) -> c (A.indexArray v 0) (A.indexArray v 1)
 
 -- | TODO
 unList :: Item -> [Item]
@@ -180,7 +201,18 @@ append =
   flip go
   where
     go ys = list' ys $ \x xs ->
-      cons x (go ys xs)
+      cons I x (go ys xs)
+
+-- | Is the first list a suffix of the second list?
+-- TODO: Optimize
+suffix :: Item -> Item -> Item
+suffix xs ys =
+  if xs == ys
+  then true I
+  else list'
+          (false I)
+          (\_hd tl -> suffix xs tl)
+          ys
 
 
 --------------------------------------------------
@@ -190,9 +222,16 @@ append =
 
 class IsItem t where
   -- | Encode a value as an item
-  encode :: t -> Item
+  -- encode :: t -> Item
+  encode :: (Term e -> e) -> t -> e
   -- | Decode a value from an item
   decode :: Item -> t
+  -- decode :: (Show e) => (e -> Term e) -> e -> t
+
+
+-- | Encode a value as a `Rigit`.
+encodeI :: IsItem t => t -> Item
+encodeI = encode I
 
 
 -- IMPORTANT NOTE: The implemented instances below must correspond with the
@@ -200,97 +239,51 @@ class IsItem t where
 
 
 instance IsItem () where
-  encode _ = Unit
+  encode mk _ = mk Unit
   decode _ = ()
 
 -- TODO: re-implement based on Num?
 instance IsItem Bool where
-  encode = \case
-    False -> false
-    True  -> true
+  encode mk = \case
+    False -> false mk
+    True  -> true mk
   decode = bool' False True
---     case x of
---       Tag k _ -> case k of
---         0 -> False
---         1 -> True
---       _ -> error $ "cannot decode " ++ show x ++ " to Bool"
 
 -- TODO: re-implement based on Num?
 instance IsItem Int where
-  encode = Sym . T.pack . show
+  encode mk = mk . Sym . T.pack . show
   decode p = case p of
-    Sym x -> read (T.unpack x)
+    I (Sym x) -> read (T.unpack x)
     _ -> error $ "cannot decode " ++ show p ++ " to Int"
 
 instance IsItem T.Text where
-  encode = Sym
+  encode mk = mk . Sym
   decode p = case p of
-    Sym x -> x
+    I (Sym x) -> x
     _ -> error $ "cannot decode " ++ show p ++ " to Text"
 
 instance (IsItem a, IsItem b) => IsItem (a, b) where
-  encode (x, y) = pair (encode x) (encode y)
+  encode mk (x, y) = pair mk (encode mk x) (encode mk y)
   decode (unPair -> (x, y)) = (decode x, decode y)
---   encode (x, y) = Vec $
---     A.fromListN 2 [encode x, encode y]
---   decode p = case p of
---     Vec v -> (decode (A.indexArray v 0), decode (A.indexArray v 1))
---     _ -> error $ "cannot decode " ++ show p ++ " to (,)"
 
 instance (IsItem a, IsItem b, IsItem c) => IsItem (a, b, c) where
-  encode (x, y, z) = triple (encode x) (encode y) (encode z)
+  encode mk (x, y, z) = triple mk (encode mk x) (encode mk y) (encode mk z)
   decode (unTriple -> (x, y, z)) = (decode x, decode y, decode z)
---   encode (x, y, z) = Vec $
---     A.fromListN 3 [encode x, encode y, encode z]
---   decode p = case p of
---     Vec v ->
---       ( decode (A.indexArray v 0)
---       , decode (A.indexArray v 1)
---       , decode (A.indexArray v 2)
---       )
---     _ -> error $ "cannot decode " ++ show p ++ " to (,,)"
 
 instance (IsItem a) => IsItem (Maybe a) where
-  encode = \case
-    Nothing -> nothing
-    Just x -> just (encode x)
---   encode = \case
---     Nothing -> Tag 0 Unit
---     Just x  -> Tag 1 $ encode x
+  encode mk = \case
+    Nothing -> nothing mk
+    Just x -> just mk (encode mk x)
   decode = maybe' Nothing (Just . decode)
---   decode p = case p of
---     Tag k x -> case k of
---       0 -> Nothing
---       1 -> Just (decode x)
---     _ -> error $ "cannot decode " ++ show p ++ " to Maybe"
 
 instance (IsItem a, IsItem b) => IsItem (Either a b) where
-  encode = \case
-    Left x -> left (encode x)
-    Right x -> right (encode x)
---   encode = \case
---     Left x  -> Tag 0 $ encode x
---     Right y -> Tag 1 $ encode y
+  encode mk = \case
+    Left x -> left mk (encode mk x)
+    Right x -> right mk (encode mk x)
   decode = either' (Left . decode) (Right . decode)
---   decode p = case p of
---     Tag k x -> case k of
---       0 -> Left  $ decode x
---       1 -> Right $ decode x
---     _ -> error $ "cannot decode " ++ show p ++ " to Either"
 
 instance (IsItem a) => IsItem [a] where
-  encode = \case
-    [] -> nil
-    x:xs -> cons (encode x) (encode xs)
---   encode = \case
---     []      -> Tag 0 $ Unit
---     x : xs  -> Tag 1 $ Vec $
---       A.fromListN 2 [encode x, encode xs]
+  encode mk = \case
+    [] -> nil mk
+    x:xs -> cons mk (encode mk x) (encode mk xs)
   decode = list' [] (\x xs -> decode x : decode xs)
---   decode p = case p of
---     Tag k p' -> case k of
---       0 -> []
---       1 ->
---         let (x, xs) = decode p'
---          in x : xs
---     _ -> error $ "cannot decode " ++ show p ++ " to []"

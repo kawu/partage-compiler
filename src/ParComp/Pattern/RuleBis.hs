@@ -14,9 +14,9 @@ import           Control.Monad (guard)
 
 import qualified Pipes as P
 
-import           ParComp.Item (Item)
+import           ParComp.Item (Item (..))
 import qualified ParComp.Pattern.UntypedBis as Un
-import           ParComp.Pattern.UntypedBis (MatchT, Patt, Cond, M, C)
+import           ParComp.Pattern.UntypedBis (MatchT, Patt, Cond)
 
 
 --------------------------------------------------
@@ -26,11 +26,11 @@ import           ParComp.Pattern.UntypedBis (MatchT, Patt, Cond, M, C)
 
 -- | Single deduction rule
 data Rule = Rule
-  { antecedents :: [Patt M]
+  { antecedents :: [Patt]
     -- ^ The list of rule's antecedents
-  , consequent :: Patt C
+  , consequent :: Patt
     -- ^ The rule's consequent
-  , condition :: Cond
+  , condition :: Cond Patt
     -- ^ The rule's side condition
   } deriving (Show, Eq, Ord)
 
