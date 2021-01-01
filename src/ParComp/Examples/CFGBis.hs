@@ -253,15 +253,15 @@ complete =
     -- Variables (declaring them with type annotations provides additional type
     -- safety, but is not obligatory; see the prediction rule below, where type
     -- annotations are not used, for comparison)
-    v_A = var "A"         :: Ty Patt a
-    v_As = var "As"       :: Ty Patt a
-    v_B = var "B"         :: Ty Patt a
-    v_C = var "C"         :: Ty Patt a
-    v_alpha = var "alpha" :: Ty Patt a
-    v_beta = var "beta"   :: Ty Patt a
-    v_i = var "i"         :: Ty Patt a
-    v_j = var "j"         :: Ty Patt a
-    v_k = var "k"         :: Ty Patt a
+    v_A = var "A"         :: Ty Patt Node
+    v_As = var "As"       :: Ty Patt Body
+    v_B = var "B"         :: Ty Patt Node
+    v_C = var "C"         :: Ty Patt Node
+    v_alpha = var "alpha" :: Ty Patt Body
+    v_beta = var "beta"   :: Ty Patt Body
+    v_i = var "i"         :: Ty Patt Int
+    v_j = var "j"         :: Ty Patt Int
+    v_k = var "k"         :: Ty Patt Int
 
     leftP = item (rule v_A v_As) (span v_i v_j) &
             assign
