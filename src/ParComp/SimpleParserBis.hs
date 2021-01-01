@@ -7,7 +7,7 @@
 
 
 module ParComp.SimpleParserBis
-  (  -- chartParse
+  ( chartParse
   ) where
 
 

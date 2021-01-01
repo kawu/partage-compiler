@@ -24,6 +24,7 @@ module ParComp.Pattern.UntypedBis
 
   -- * Patterns
   , Patt (..)
+  , Op (..)
   , Cond (..)
 --   , M
 --   , C

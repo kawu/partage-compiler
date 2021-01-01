@@ -8,25 +8,25 @@
 
 
 module ParComp.Examples.CFGBis
-  ( -- runCFG
-  , -- testCFG
+  ( runCFGBis
+  , testCFGBis
   ) where
 
 
-import           Prelude hiding
-  (splitAt, span, map, or, and, any, const, head)
+import           Prelude hiding (splitAt, span)  -- , map, or, and, any, const, head)
 
 import qualified Data.Text as T
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
+import           Data.String (fromString)
 
 import qualified Data.Primitive.Array as A
 
 import qualified ParComp.Item as I
-import           ParComp.Item (Item (..))
+import           ParComp.Item (Item (..), encodeI)
 import qualified ParComp.Pattern.UntypedBis as Un
 import           ParComp.Pattern.UntypedBis
-  (Patt (..), Cond (..), Fun (..)) -- , Squeeze (..), Apply (..))
+  (Op (..), Patt (..), Cond (..), Fun (..)) -- , Squeeze (..), Apply (..))
 import qualified ParComp.Pattern.RuleBis as R
 import           ParComp.Pattern.RuleBis (Rule (..))
 
@@ -84,14 +84,13 @@ type Active = (DotRule, Span)
 -- | Top-level item: either an actual active item or a grammar dotted rule.
 -- Top-level rules are later used in the prediction deduction rule (because we
 -- can).
-type Item = Either Active DotRule
+type TopItem = Either Active DotRule
 
 
 -------------------------------------------------------------------------------
 -- Core item patterns
 --
--- TODO: Move elsewhere!  Note also code duplication w.r.t. `IsItem` instances
--- in `Item.hs`.
+-- TODO: Move elsewhere!
 -------------------------------------------------------------------------------
 
 
@@ -135,271 +134,294 @@ just :: Patt -> Patt
 just = I.just P
 
 
--- -------------------------------------------------------------------------------
--- -- Item patterns (Untyped)
--- --
--- -- TODO: Type!
--- --
--- -- Note that it should not be necessary to define the item patterns manually.
--- -- The plan is to automatically generated such patterns for custom data types
--- -- using Template Haskell.
--- -------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
+-- Item patterns (Untyped)
 --
+-- TODO: Type!
 --
--- -- | Top-level active item pattern
--- -- item :: Patt repr => repr DotRule -> repr Span -> repr Item
--- item :: Patt t -> Patt t -> Patt t
--- item r s = left $ pair r s
---
---
--- -- | Dotted rule as a top-level item
--- -- top :: Patt repr => repr DotRule -> repr Item
--- top :: Patt t -> Patt t
--- top = right
---
---
--- -- | Dotted rule
--- -- rule :: Patt repr => repr Head -> repr Body -> repr DotRule
--- rule :: Patt t -> Patt t -> Patt t
--- rule = pair
---
---
--- -- | Item's span
--- -- span :: Patt repr => repr Int -> repr Int -> repr Span
--- span :: Patt t -> Patt t -> Patt t
--- span = pair
---
---
--- -- | Position in a sentence
--- -- pos :: Patt repr => Int -> repr Int
--- pos :: Int -> Patt t
--- pos = Const . I.encode
---
---
--- -- | Dotted rule's head
--- -- head :: Patt repr => Node -> repr Head
--- head :: Node -> Patt t
--- head = Const . I.encode
---
---
--- -- | Dot in a dotted rule
--- -- dot :: Patt repr => repr (Maybe Node)
--- dot :: Patt t
--- dot = nothing
---
---
--- -------------------------------------------------------------------------------
--- -- Grammar representation
--- -------------------------------------------------------------------------------
---
---
--- -- | Pattern to extract the non-terminal / terminal symbol of a node
--- label :: Patt C -> Patt C
+-- Note that it should not be necessary to define the item patterns manually.
+-- The plan is to automatically generated such patterns for custom data types
+-- using Template Haskell.
+-------------------------------------------------------------------------------
+
+
+-- | Top-level active item pattern
+-- item :: Patt repr => repr DotRule -> repr Span -> repr Item
+item :: Patt -> Patt -> Patt
+item r s = left $ pair r s
+
+
+-- | Dotted rule as a top-level item
+-- top :: Patt repr => repr DotRule -> repr Item
+top :: Patt -> Patt
+top = right
+
+
+-- | Dotted rule
+-- rule :: Patt repr => repr Head -> repr Body -> repr DotRule
+rule :: Patt -> Patt -> Patt
+rule = pair
+
+
+-- | Item's span
+-- span :: Patt repr => repr Int -> repr Int -> repr Span
+span :: Patt -> Patt -> Patt
+span = pair
+
+
+-- | Position in a sentence
+-- pos :: Patt repr => Int -> repr Int
+pos :: Int -> Patt
+pos = I.encode P
+
+
+-- | Dotted rule's head
+-- head :: Patt repr => Node -> repr Head
+head :: Node -> Patt
+head = I.encode P
+
+
+-- | Dot in a dotted rule
+-- dot :: Patt repr => repr (Maybe Node)
+dot :: Patt
+dot = nothing
+
+
+-------------------------------------------------------------------------------
+-- Grammar representation
+-------------------------------------------------------------------------------
+
+
+-- | Pattern to extract the non-terminal / terminal symbol of a node
+label :: Patt -> Patt
+label =
+  O . Apply fun
+  where
+    fun = Fun "label" $ \x -> [extract x]
+    extract (I.unEither -> Left (I.unPair -> (x, _))) = x
+    extract (I.unEither -> Right x) = x
 -- label =
---   Apply . Fun "label" $ \x -> [extract x]
+--   fun (Fun "label" nodeLabel)
 --   where
---     extract (I.unEither -> Left (I.unPair -> (x, _))) = x
---     extract (I.unEither -> Right x) = x
--- -- label =
--- --   fun (Fun "label" nodeLabel)
--- --   where
--- --     nodeLabel (Left (nonTerm, _nodeId)) = [nonTerm]
--- --     nodeLabel (Right term) = [term]
---
---
--- -------------------------------------------------------------------------------
--- -- CFG deduction rules
--- -------------------------------------------------------------------------------
---
---
--- -- | CFG complete rule
--- complete :: Rule
--- complete =
---
---   Rule
---   { antecedents  = [leftP, rightP]
---   , consequent = downP
---   , condition = condP
---   }
---
---   where
---
---     -- Variables (declaring them with type annotations provides additional type
---     -- safety, but is not obligatory; see the prediction rule below, where type
---     -- annotations are not used, for comparison)
---     v_A = Label "A"         :: Patt t
---     v_As = Label "As"       :: Patt t
---     v_B = Label "B"         :: Patt t
---     v_C = Label "C"         :: Patt t
---     -- v_Cs = Label "Cs"       :: Patt t
---     v_alpha = Label "alpha" :: Patt t
---     v_beta = Label "beta"   :: Patt t
---     v_i = Label "i"         :: Patt t
---     v_j = Label "j"         :: Patt t
---     v_k = Label "k"         :: Patt t
---
---     leftP = item (rule v_A v_As) (span v_i v_j)
---       `Seq` Assign
---                 (pair v_alpha (dot .: just v_B .: v_beta))
---                 (splitAtDot v_As)
---
--- --     -- First antecendent
--- --     leftP = item
--- --       (rule v_A
--- --         (via splitAtDot
--- --           (pair v_alpha (dot .: just v_B .: v_beta))
--- --         )
--- --       )
--- --       (span v_i v_j)
---
+--     nodeLabel (Left (nonTerm, _nodeId)) = [nonTerm]
+--     nodeLabel (Right term) = [term]
+
+
+-------------------------------------------------------------------------------
+-- CFG deduction rules
+-------------------------------------------------------------------------------
+
+
+-- | Variable (TODO: Move to Untyped.hs)
+var :: String -> Patt
+var = O . Label . fromString
+
+
+-- | Variable (TODO: Move to Untyped.hs)
+anyp :: Patt
+anyp = O Any
+
+
+assign :: Patt -> Patt -> Patt
+assign x v = O $ Assign x v
+
+
+(&) :: Patt -> Patt -> Patt
+(&) p q = O $ Seq p q
+infixr 5 &
+
+
+-- | CFG complete rule
+complete :: Rule
+complete =
+
+  Rule
+  { antecedents  = [leftP, rightP]
+  , consequent = downP
+  , condition = condP
+  }
+
+  where
+
+    -- Variables (declaring them with type annotations provides additional type
+    -- safety, but is not obligatory; see the prediction rule below, where type
+    -- annotations are not used, for comparison)
+    v_A = var "A"         :: Patt
+    v_As = var "As"       :: Patt
+    v_B = var "B"         :: Patt
+    v_C = var "C"         :: Patt
+    v_alpha = var "alpha" :: Patt
+    v_beta = var "beta"   :: Patt
+    v_i = var "i"         :: Patt
+    v_j = var "j"         :: Patt
+    v_k = var "k"         :: Patt
+
+    leftP = item (rule v_A v_As) (span v_i v_j) &
+            assign
+              (pair v_alpha (dot .: just v_B .: v_beta))
+              (splitAtDot v_As)
+
+--     -- First antecendent
+--     leftP = item
+--       (rule v_A
+--         (via splitAtDot
+--           (pair v_alpha (dot .: just v_B .: v_beta))
+--         )
+--       )
+--       (span v_i v_j)
+
+    -- Second antecendent
+    rightP = item
+      (rule v_C (suffix (dot .: nil)))
+      (span v_j v_k)
+
 --     -- Second antecendent
 --     rightP = item
---       (rule v_C (suffixP (dot .: nil)))
+--       (rule v_C (suffix (dot .: nil)))
 --       (span v_j v_k)
---
--- --     -- Second antecendent
--- --     rightP = item
--- --       (rule v_C (suffix (dot .: nil)))
--- --       (span v_j v_k)
---
+
+    -- Side condition
+    condP = Eq (label v_B) (label v_C)
+
 --     -- Side condition
---     condP = Eq (label v_B) (label v_C)
---
--- --     -- Side condition
--- --     condP = eq
--- --       (map label v_B)
--- --       (map label v_C)
---
---     -- Consequent
+--     condP = eq
+--       (map label v_B)
+--       (map label v_C)
+
+    -- Consequent
+    downP = item
+      (rule v_A
+        (append
+          v_alpha
+          (just v_B .: dot .: v_beta)
+        )
+      )
+      (span v_i v_k)
 --     downP = item
 --       (rule v_A
---         (apply append
---           (v_alpha :: Patt C)
---           ((just v_B .: dot .: v_beta) :: Patt C)
+--         (bimap Util.append
+--           v_alpha
+--           (just v_B .: dot .: v_beta)
 --         )
 --       )
 --       (span v_i v_k)
---
--- --
--- --     -- Consequent
--- --     downP = item
--- --       (rule v_A
--- --         (bimap Util.append
--- --           v_alpha
--- --           (just v_B .: dot .: v_beta)
--- --         )
--- --       )
--- --       (span v_i v_k)
--- --
--- --
--- --
--- -- -- | CFG predict rule
--- -- predict :: Rule Item
--- -- predict =
--- --   Rule [leftP, rightP] downP condP
--- --   where
--- --     leftP = item
--- --       (rule any
--- --         (suffix $ dot .: just (var "B") .: any)
--- --       )
--- --       (span (var "i") (var "j"))
--- --     rightP = top $
--- --       rule (var "C") (var "alpha")
--- --     condP = eq
--- --       (map label (var "B"))
--- --       (map label (var "C"))
--- --     downP = item
--- --       (rule (var "C") (var "alpha"))
--- --       (span (var "j") (var "j"))
--- --
--- --
--- -- -------------------------------------------------------------------------------
--- -- -- Axioms
--- -- -------------------------------------------------------------------------------
--- --
--- --
--- -- -- | Enumerate base items for the given sentence and grammar.
--- -- cfgBaseItems
--- --   :: [T.Text]                   -- ^ Input sentence
--- --   -> S.Set (Node, [Node])       -- ^ CFG rules: set of (head, body) pairs
--- --   -> [Item]
--- -- cfgBaseItems inp cfgRules =
--- --   base1 ++ base2 ++ baseRules
--- --   where
--- --     n = length inp
--- --     base1 = do
--- --       (hd, bd) <- S.toList cfgRules
--- --       return $ Left (mkRule hd bd, (0, 0))
--- --     base2 = do
--- --       (i, term) <- zip [0..n-1] inp
--- --       return $ Left (mkRule (Right term) [], (i, i + 1))
--- --     baseRules = do
--- --       (hd, bd) <- S.toList cfgRules
--- --       return $ Right (mkRule hd bd)
--- --     mkRule hd bd = (hd, Nothing : fmap Just bd)
--- --
--- --
--- -- -------------------------------------------------------------------------------
--- -- -- Main
--- -- -------------------------------------------------------------------------------
--- --
--- --
--- -- -- | Test CFG-like grammar (instead of non-terminals, nodes are used)
--- -- testRules :: S.Set (Node, [Node])
--- -- testRules = S.fromList $ fmap prepareRule
--- --   [ ("NP_1", ["N_2"])
--- --   , ("NP_3", ["DET_4", "N_5"])
--- --   , ("S_6", ["NP_7", "VP_8"])
--- --   , ("VP_9", ["V_10"])
--- --   , ("VP_11", ["V_12", "Adv_13"])
--- --   , ("VP_14", ["Adv_15", "V_16"])
--- --   , ("VP_17", ["Adv_18", "V_19", "NP_20"])
--- --   , ("DET_21", ["a"])
--- --   , ("DET_22", ["some"])
--- --   , ("N_23", ["man"])
--- --   , ("N_24", ["pizza"])
--- --   , ("V_25", ["eats"])
--- --   , ("V_26", ["runs"])
--- --   , ("Adv_27", ["quickly"])
--- --   ]
--- --   where
--- --     prepareRule (hd, bd) =
--- --       ( prepareNode hd
--- --       , fmap prepareNode bd
--- --       )
--- --     prepareNode x = case T.splitOn "_" x of
--- --       [term] -> Right term
--- --       [nonTerm, nodeId] -> Left (nonTerm, nodeId)
--- --       _ -> error $ "testRules: unhandled symbol (" ++ T.unpack x ++ ")"
--- --
--- --
--- -- -- | Test sentence to parse
--- -- testSent :: [T.Text]
--- -- testSent = ["a", "man", "quickly", "eats", "some", "pizza"]
--- --
--- --
--- -- -- | Run the parser on the test grammar and sentence.
--- -- runCFG :: Bool -> IO (Maybe Item)
--- -- runCFG simpleParser = do
--- --   let baseItems = cfgBaseItems testSent testRules
--- --       ruleMap = M.fromList
--- --         [ ("CO", complete)
--- --         , ("PR", predict)
--- --         ]
--- --       zero = pos 0
--- --       slen = pos (length testSent)
--- --       finalPatt = item any (span zero slen)
--- --   if simpleParser
--- --      then SP.chartParse baseItems ruleMap finalPatt
--- --      else P.chartParse  baseItems ruleMap finalPatt
--- --
--- --
--- -- -- | Run the parser on the test grammar and sentence.
--- -- testCFG :: IO ()
--- -- testCFG = do
--- --   runCFG False >>= \case
--- --     Nothing -> putStrLn "# No parse found"
--- --     Just it -> print it
+
+
+
+-- | CFG predict rule
+predict :: Rule
+predict =
+  Rule [leftP, rightP] downP condP
+  where
+--     -- TODO: This does not work due to the `suffix`, which should not
+--     -- take a matching pattern as its first argument!
+--     leftP = item
+--       (rule anyp
+--         (suffix $ dot .: just (var "B") .: anyp)
+--       )
+--       (span (var "i") (var "j"))
+    leftP = item
+      (rule anyp (var "body"))
+      (span (var "i") (var "j"))
+      & assign
+          (pair anyp (dot .: just (var "B") .: anyp))
+          (splitAtDot (var "body"))
+    rightP = top $
+      rule (var "C") (var "alpha")
+    -- TODO: Eq -> eq
+    condP = Eq
+      (label (var "B"))
+      (label (var "C"))
+    downP = item
+      (rule (var "C") (var "alpha"))
+      (span (var "j") (var "j"))
+
+
+-------------------------------------------------------------------------------
+-- Axioms
+-------------------------------------------------------------------------------
+
+
+-- | Enumerate base items for the given sentence and grammar.
+cfgBaseItems
+  :: [T.Text]                   -- ^ Input sentence
+  -> S.Set (Node, [Node])       -- ^ CFG rules: set of (head, body) pairs
+  -> [TopItem]
+cfgBaseItems inp cfgRules =
+  base1 ++ base2 ++ baseRules
+  where
+    n = length inp
+    base1 = do
+      (hd, bd) <- S.toList cfgRules
+      return $ Left (mkRule hd bd, (0, 0))
+    base2 = do
+      (i, term) <- zip [0..n-1] inp
+      return $ Left (mkRule (Right term) [], (i, i + 1))
+    baseRules = do
+      (hd, bd) <- S.toList cfgRules
+      return $ Right (mkRule hd bd)
+    mkRule hd bd = (hd, Nothing : fmap Just bd)
+
+
+-------------------------------------------------------------------------------
+-- Main
+-------------------------------------------------------------------------------
+
+
+-- | Test CFG-like grammar (instead of non-terminals, nodes are used)
+testRules :: S.Set (Node, [Node])
+testRules = S.fromList $ fmap prepareRule
+  [ ("NP_1", ["N_2"])
+  , ("NP_3", ["DET_4", "N_5"])
+  , ("S_6", ["NP_7", "VP_8"])
+  , ("VP_9", ["V_10"])
+  , ("VP_11", ["V_12", "Adv_13"])
+  , ("VP_14", ["Adv_15", "V_16"])
+  , ("VP_17", ["Adv_18", "V_19", "NP_20"])
+  , ("DET_21", ["a"])
+  , ("DET_22", ["some"])
+  , ("N_23", ["man"])
+  , ("N_24", ["pizza"])
+  , ("V_25", ["eats"])
+  , ("V_26", ["runs"])
+  , ("Adv_27", ["quickly"])
+  ]
+  where
+    prepareRule (hd, bd) =
+      ( prepareNode hd
+      , fmap prepareNode bd
+      )
+    prepareNode x = case T.splitOn "_" x of
+      [term] -> Right term
+      [nonTerm, nodeId] -> Left (nonTerm, nodeId)
+      _ -> error $ "testRules: unhandled symbol (" ++ T.unpack x ++ ")"
+
+
+-- | Test sentence to parse
+testSent :: [T.Text]
+testSent = ["a", "man", "quickly", "eats", "some", "pizza"]
+
+
+-- | Run the parser on the test grammar and sentence.
+runCFGBis :: IO (Maybe Item)
+runCFGBis = do
+  let baseItems = map encodeI $ cfgBaseItems testSent testRules
+      ruleMap = M.fromList
+        [ ("CO", complete)
+        , ("PR", predict)
+        ]
+      zero = pos 0
+      slen = pos (length testSent)
+      finalPatt = item anyp (span zero slen)
+  SP.chartParse baseItems ruleMap finalPatt
+
+
+-- | Run the parser on the test grammar and sentence.
+testCFGBis :: IO ()
+testCFGBis = do
+  runCFGBis >>= \case
+    Nothing -> putStrLn "# No parse found"
+    Just it -> print $ (I.decode it :: TopItem)
 
 
 --------------------------------------------------
@@ -436,8 +458,9 @@ infixr 5 .:
 --       I.Tag 1 . I.Vec $ A.fromListN 2 [x, xs]
 
 
--- splitAtDot :: Patt C -> Patt C
--- splitAtDot p = apply splitAt (Const I.nothing :: Patt C) p
+splitAtDot :: Patt -> Patt
+splitAtDot =
+  O . Apply splitAt . pair dot
 
 
 -- | Split a list at a given element
@@ -465,10 +488,11 @@ splitAt =
 
 
 -- | Append two lists
-append :: Fun
-append =
-  -- Fun "append" $ squeeze (\xs ys -> [I.append xs ys])
-  Fun "append" $ I.pair' (\xs ys -> [I.append xs ys])
+append :: Patt -> Patt -> Patt
+append p q =
+  O . Apply app $ pair p q
+  where
+    app = Fun "append" $ I.pair' (\xs ys -> [I.append xs ys])
 
 
 -- -- -- | Match any suffix that satisfies the given suffix pattern.
@@ -487,7 +511,17 @@ append =
 
 
 -- | Check if the item contains a given suffix.
--- TODO: This could be definitely implemented more efficiently!
-suffix :: Fun
-suffix =
-  Fun "suffix" $ I.pair' (\xs ys -> [I.suffix xs ys])
+suffix :: Patt -> Patt
+suffix p =
+
+  xs & check cond
+
+  where
+
+    xs = var "xs"
+    cond = Eq (apply fun $ pair p xs) (I.true P)
+
+    fun = Fun "suffix" $ I.pair' (\xs ys -> [I.suffix xs ys])
+
+    check = O . Guard
+    apply f e = O $ Apply f e
