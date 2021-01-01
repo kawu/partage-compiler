@@ -14,9 +14,9 @@ import qualified Data.Text as T
 import           Data.List (sort)
 import           Data.Ord
 
-import qualified ParComp.Item as I
-import           ParComp.Item (encodeI, decode)
-import qualified ParComp.Pattern.UntypedBis as Un
+import qualified ParComp.ItemBis as I
+import           ParComp.ItemBis (encode, Item (I), decode)
+-- import qualified ParComp.Pattern.UntypedBis as Un
 -- import qualified ParComp.Pattern.Indexing as Ix
 -- import qualified ParComp.Pattern.Typed as Ty
 -- import           ParComp.Pattern.Typed
@@ -50,32 +50,32 @@ properties = testGroup "Properties" [qcProps]  --, scProps]
 
 qcProps = testGroup "(checked by QuickCheck)"
   [ QC.testProperty "decode (encode [x1, ..., xn]) == [x1, ..., xn]" $
-      \xs -> (decode . encodeI) xs == (xs :: [Int])
+      \xs -> (decode . encode I) xs == (xs :: [Int])
   , QC.testProperty "decode (encode (Just x)) == Just x" $
-      \x -> (decode . encodeI) (Just x) == Just (x :: T.Text)
+      \x -> (decode . encode I) (Just x) == Just (x :: T.Text)
   , QC.testProperty "append xs ys == xs ++ ys" $
-      \xs ys -> decode (I.append (encodeI xs) (encodeI ys)) == (xs ++ ys :: [Int])
+      \xs ys -> decode (I.append (encode I xs) (encode I ys)) == (xs ++ ys :: [Int])
 
   , QC.testProperty "suffix xs xs == True" $
       \xs ->
-        let xsI = encodeI (xs :: [Int])
+        let xsI = encode I (xs :: [Int])
          in decode (I.suffix xsI xsI) == True
   , QC.testProperty "suffix ys (xs ++ ys) == True" $
       \xs ys ->
-        let xsI = encodeI (xs :: [T.Text])
-            ysI = encodeI (ys :: [T.Text])
+        let xsI = encode I (xs :: [T.Text])
+            ysI = encode I (ys :: [T.Text])
             zsI = I.append xsI ysI
          in decode (I.suffix ysI zsI) == True
   , QC.testProperty "suffix xs (x:xs) == True" $
       \x xs ->
-        let xI = encodeI (x :: Int)
-            xsI = encodeI (xs :: [Int])
+        let xI = encode I (x :: Int)
+            xsI = encode I (xs :: [Int])
             xxsI = I.cons I.I xI xsI
          in decode (I.suffix xsI xxsI) == True
   , QC.testProperty "suffix (x:xs) xs == False" $
       \x xs ->
-        let xI = encodeI (x :: Int)
-            xsI = encodeI (xs :: [Int])
+        let xI = encode I (x :: Int)
+            xsI = encode I (xs :: [Int])
             xxsI = I.cons I.I xI xsI
          in decode (I.suffix xxsI xsI) == False
   ]

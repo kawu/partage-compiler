@@ -20,8 +20,8 @@ import qualified Data.Text.IO as T
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 
-import qualified ParComp.Item as I
-import qualified ParComp.Pattern.UntypedBis as Un
+import qualified ParComp.ItemBis as I
+import qualified ParComp.Match as Un
 -- import qualified ParComp.Pattern.Typed as Ty
 -- import           ParComp.Pattern.Typed (Pattern(..), Patt(..))
 import qualified ParComp.Pattern.RuleBis as R
@@ -111,7 +111,7 @@ chartParse
     -- ^ Axiom-generated items
   -> M.Map T.Text R.Rule
     -- ^ Named deduction rules
-  -> Un.Patt
+  -> I.Patt
     -- ^ Pattern the final item should match
   -> IO (Maybe I.Item)
 chartParse baseItems ruleMap finalPatt =

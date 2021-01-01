@@ -14,9 +14,9 @@ import           Control.Monad (guard)
 
 import qualified Pipes as P
 
-import           ParComp.Item (Item (..))
-import qualified ParComp.Pattern.UntypedBis as Un
-import           ParComp.Pattern.UntypedBis (MatchT, Patt, Cond)
+import           ParComp.ItemBis (Item (..), Patt, Cond)
+import qualified ParComp.Match as Un
+import           ParComp.Match (MatchT)
 
 
 --------------------------------------------------
@@ -25,6 +25,7 @@ import           ParComp.Pattern.UntypedBis (MatchT, Patt, Cond)
 
 
 -- | Single deduction rule
+-- TODO: Add types?
 data Rule = Rule
   { antecedents :: [Patt]
     -- ^ The list of rule's antecedents

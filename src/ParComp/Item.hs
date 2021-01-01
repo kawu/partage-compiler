@@ -229,7 +229,7 @@ class IsItem t where
   -- decode :: (Show e) => (e -> Term e) -> e -> t
 
 
--- | Encode a value as a `Rigit`.
+-- | Encode a value as an `Item`.
 encodeI :: IsItem t => t -> Item
 encodeI = encode I
 

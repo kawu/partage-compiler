@@ -20,14 +20,9 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import           Data.String (fromString)
 
-import qualified Data.Primitive.Array as A
-
-import qualified ParComp.Item as I
-import           ParComp.Item (Item (..), encodeI)
-import qualified ParComp.Pattern.UntypedBis as Un
-import           ParComp.Pattern.UntypedBis
-  (Op (..), Patt (..), Cond (..), Fun (..)) -- , Squeeze (..), Apply (..))
-import qualified ParComp.Pattern.RuleBis as R
+import qualified ParComp.ItemBis as I
+import           ParComp.ItemBis
+  (Ty (..), Item (..), Op (..), Patt (..), Cond (..), Fun (..), FunName (..))
 import           ParComp.Pattern.RuleBis (Rule (..))
 
 -- import           ParComp.Pattern.Untyped (Fun(..))
@@ -95,42 +90,42 @@ type TopItem = Either Active DotRule
 
 
 -- | Unit () pattern
-unit :: Patt
-unit = P I.Unit
+unit :: Ty Patt ()
+unit = I.unit P
 
 
 -- | Pair pattern
-pair :: Patt -> Patt -> Patt
+pair :: Ty Patt a -> Ty Patt b -> Ty Patt (a, b)
 pair = I.pair P
 
 
 -- | Cons (list) pattern
-nil :: Patt
+nil :: Ty Patt [a]
 nil = I.nil P
 
 
 -- | Cons (list) pattern
-cons :: Patt -> Patt -> Patt
+cons :: Ty Patt a -> Ty Patt [a] -> Ty Patt [a]
 cons = I.cons P
 
 
 -- | Left pattern (`Either`)
-left :: Patt -> Patt
+left :: Ty Patt a -> Ty Patt (Either a b)
 left = I.left P
 
 
 -- | Right pattern (`Either`)
-right :: Patt -> Patt
+right :: Ty Patt b -> Ty Patt (Either a b)
 right = I.right P
 
 
 -- | TODO
-nothing :: Patt
+nothing :: Ty Patt (Maybe a)
 nothing = I.nothing P
 
 
 -- | TODO
-just :: Patt -> Patt
+just :: Ty Patt a -> Ty Patt (Maybe a)
 just = I.just P
 
 
@@ -146,44 +141,37 @@ just = I.just P
 
 
 -- | Top-level active item pattern
--- item :: Patt repr => repr DotRule -> repr Span -> repr Item
-item :: Patt -> Patt -> Patt
+item :: Ty Patt DotRule -> Ty Patt Span -> Ty Patt TopItem
 item r s = left $ pair r s
 
 
 -- | Dotted rule as a top-level item
--- top :: Patt repr => repr DotRule -> repr Item
-top :: Patt -> Patt
+top :: Ty Patt DotRule -> Ty Patt TopItem
 top = right
 
 
 -- | Dotted rule
--- rule :: Patt repr => repr Head -> repr Body -> repr DotRule
-rule :: Patt -> Patt -> Patt
+rule :: Ty Patt Head -> Ty Patt Body -> Ty Patt DotRule
 rule = pair
 
 
 -- | Item's span
--- span :: Patt repr => repr Int -> repr Int -> repr Span
-span :: Patt -> Patt -> Patt
+span :: Ty Patt Int -> Ty Patt Int -> Ty Patt Span
 span = pair
 
 
 -- | Position in a sentence
--- pos :: Patt repr => Int -> repr Int
-pos :: Int -> Patt
+pos :: Int -> Ty Patt Int
 pos = I.encode P
 
 
 -- | Dotted rule's head
--- head :: Patt repr => Node -> repr Head
-head :: Node -> Patt
+head :: Node -> Ty Patt Head
 head = I.encode P
 
 
 -- | Dot in a dotted rule
--- dot :: Patt repr => repr (Maybe Node)
-dot :: Patt
+dot :: Ty Patt (Maybe Node)
 dot = nothing
 
 
@@ -192,12 +180,28 @@ dot = nothing
 -------------------------------------------------------------------------------
 
 
+-- | Name a function and lift it to a pattern-level function
+name :: FunName -> (Ty Item a -> Ty Item b) -> Ty Patt a -> Ty Patt b
+name funName f =
+  let named = Fun funName $ \x -> [unTy $ f $ Ty x]
+   in Ty . O . Apply named . unTy
+
+
+-- | 2-argument variant of `name`
+name2
+  :: FunName
+  -> (Ty Item a -> Ty Item b -> Ty Item c)
+  -> Ty Patt a -> Ty Patt b -> Ty Patt c
+name2 funName f =
+  let named = Fun funName $ \x -> [unTy $ I.pair' f $ Ty x]
+   in \x y -> Ty . O . Apply named . unTy $ pair x y
+
+
 -- | Pattern to extract the non-terminal / terminal symbol of a node
-label :: Patt -> Patt
+label :: Ty Patt Node -> Ty Patt Sym
 label =
-  O . Apply fun
+  name "label" extract
   where
-    fun = Fun "label" $ \x -> [extract x]
     extract (I.unEither -> Left (I.unPair -> (x, _))) = x
     extract (I.unEither -> Right x) = x
 -- label =
@@ -212,22 +216,25 @@ label =
 -------------------------------------------------------------------------------
 
 
--- | Variable (TODO: Move to Untyped.hs)
-var :: String -> Patt
-var = O . Label . fromString
+-- | Variable (TODO: Move)
+var :: String -> Ty Patt a
+var = Ty . O . Var . fromString
 
 
--- | Variable (TODO: Move to Untyped.hs)
-anyp :: Patt
-anyp = O Any
+-- | Wildcard pattern (TODO: Move)
+anyp :: Ty Patt a
+anyp = Ty $ O Any
 
 
-assign :: Patt -> Patt -> Patt
-assign x v = O $ Assign x v
+-- TODO: Maybe the resulting type should be `Ty Patt Void`?
+-- TODO: Move
+assign :: Ty Patt a -> Ty Patt a -> Ty Patt b
+assign (Ty x) (Ty v) = Ty . O $ Assign x v
 
 
-(&) :: Patt -> Patt -> Patt
-(&) p q = O $ Seq p q
+-- TODO: Move
+(&) :: Ty Patt a -> Ty Patt a -> Ty Patt a
+(&) (Ty p) (Ty q) = Ty . O $ Seq p q
 infixr 5 &
 
 
@@ -236,8 +243,8 @@ complete :: Rule
 complete =
 
   Rule
-  { antecedents  = [leftP, rightP]
-  , consequent = downP
+  { antecedents  = [unTy leftP, unTy rightP]
+  , consequent = unTy downP
   , condition = condP
   }
 
@@ -246,15 +253,15 @@ complete =
     -- Variables (declaring them with type annotations provides additional type
     -- safety, but is not obligatory; see the prediction rule below, where type
     -- annotations are not used, for comparison)
-    v_A = var "A"         :: Patt
-    v_As = var "As"       :: Patt
-    v_B = var "B"         :: Patt
-    v_C = var "C"         :: Patt
-    v_alpha = var "alpha" :: Patt
-    v_beta = var "beta"   :: Patt
-    v_i = var "i"         :: Patt
-    v_j = var "j"         :: Patt
-    v_k = var "k"         :: Patt
+    v_A = var "A"         :: Ty Patt a
+    v_As = var "As"       :: Ty Patt a
+    v_B = var "B"         :: Ty Patt a
+    v_C = var "C"         :: Ty Patt a
+    v_alpha = var "alpha" :: Ty Patt a
+    v_beta = var "beta"   :: Ty Patt a
+    v_i = var "i"         :: Ty Patt a
+    v_j = var "j"         :: Ty Patt a
+    v_k = var "k"         :: Ty Patt a
 
     leftP = item (rule v_A v_As) (span v_i v_j) &
             assign
@@ -281,7 +288,8 @@ complete =
 --       (span v_j v_k)
 
     -- Side condition
-    condP = Eq (label v_B) (label v_C)
+    -- TODO: not safe!
+    condP = Eq (unTy $ label v_B) (unTy $ label v_C)
 
 --     -- Side condition
 --     condP = eq
@@ -311,7 +319,7 @@ complete =
 -- | CFG predict rule
 predict :: Rule
 predict =
-  Rule [leftP, rightP] downP condP
+  Rule [unTy leftP, unTy rightP] (unTy downP) condP
   where
 --     -- TODO: This does not work due to the `suffix`, which should not
 --     -- take a matching pattern as its first argument!
@@ -330,8 +338,8 @@ predict =
       rule (var "C") (var "alpha")
     -- TODO: Eq -> eq
     condP = Eq
-      (label (var "B"))
-      (label (var "C"))
+      (unTy $ label (var "B"))
+      (unTy $ label (var "C"))
     downP = item
       (rule (var "C") (var "alpha"))
       (span (var "j") (var "j"))
@@ -405,14 +413,14 @@ testSent = ["a", "man", "quickly", "eats", "some", "pizza"]
 -- | Run the parser on the test grammar and sentence.
 runCFGBis :: IO (Maybe Item)
 runCFGBis = do
-  let baseItems = map encodeI $ cfgBaseItems testSent testRules
+  let baseItems = map (unTy . I.encode I) $ cfgBaseItems testSent testRules
       ruleMap = M.fromList
         [ ("CO", complete)
         , ("PR", predict)
         ]
       zero = pos 0
       slen = pos (length testSent)
-      finalPatt = item anyp (span zero slen)
+      finalPatt = unTy $ item anyp (span zero slen)
   SP.chartParse baseItems ruleMap finalPatt
 
 
@@ -421,7 +429,7 @@ testCFGBis :: IO ()
 testCFGBis = do
   runCFGBis >>= \case
     Nothing -> putStrLn "# No parse found"
-    Just it -> print $ (I.decode it :: TopItem)
+    Just it -> print $ (I.decode (Ty it) :: TopItem)
 
 
 --------------------------------------------------
@@ -431,51 +439,30 @@ testCFGBis = do
 
 -- | Operator synonym to `cons`
 -- (.:) :: (Patt repr) => repr a -> repr [a] -> repr [a]
-(.:) :: Patt -> Patt -> Patt
+(.:) :: Ty Patt a -> Ty Patt [a] -> Ty Patt [a]
 (.:) = I.cons P
 infixr 5 .:
 
 
--- -- | Split a list at
--- splitAtDot :: Patt C -> Patt C
--- splitAtDot = Apply . Fun "splitAtDot" $ \xs ->
---   let (ls, rs) = go xs
---    in [I.Vec $ A.fromListN 2 [ls, rs]]
---   where
---     go :: I.Item -> (I.Item, I.Item)
---     go list = case list of
---       I.Tag 0 _ -> (nil, nil)
---       I.Tag 1 (I.Vec v) ->
---         if x == I.Tag 0 I.Unit
---         then (nil, list)
---         else let (pref, suff) = go xs
---               in (cons x pref, suff)
---         where
---           x = A.indexArray v 0
---           xs = A.indexArray v 1
---     nil = I.Tag 0 I.Unit
---     cons x xs =
---       I.Tag 1 . I.Vec $ A.fromListN 2 [x, xs]
-
-
-splitAtDot :: Patt -> Patt
+splitAtDot :: Ty Patt Body -> Ty Patt (Body, Body)
 splitAtDot =
-  O . Apply splitAt . pair dot
+  -- O . Apply splitAt . pair dot
+  splitAt dot
 
 
 -- | Split a list at a given element
-splitAt :: Fun
+splitAt :: Ty Patt a -> Ty Patt [a] -> Ty Patt ([a], [a])
 splitAt =
 
-  Fun "splitAt" $ I.pair' doit
+  name2 "splitAt" doit
 
   where
 
+    doit :: Ty Item a -> Ty Item [a] -> Ty Item ([a], [a])
     doit at xs =
       let (ls, rs) = go at xs
-       in [I.pair I ls rs]
+       in I.pair I ls rs
 
-    go :: I.Item -> I.Item -> (I.Item, I.Item)
     go at list = I.list'
       (I.nil I, I.nil I)
       (\x xs ->
@@ -488,30 +475,31 @@ splitAt =
 
 
 -- | Append two lists
-append :: Patt -> Patt -> Patt
-append p q =
-  O . Apply app $ pair p q
-  where
-    app = Fun "append" $ I.pair' (\xs ys -> [I.append xs ys])
-
-
--- -- -- | Match any suffix that satisfies the given suffix pattern.
--- -- suffix :: (Patt repr) => repr [a] -> repr [a]
--- -- suffix p = fix $ choice p (any .: rec)
---
---
--- -- | Check if the item contains a given suffix.
--- -- suffix :: (Patt repr) => repr [a] -> repr [a]
--- suffixP :: Patt C -> Patt M
--- suffixP p =
---   xs `Seq` Guard cond
+append :: Ty Patt [a] -> Ty Patt [a] -> Ty Patt [a]
+append =
+  name2 "append" I.append
+--   O . Apply app $ pair p q
 --   where
---     xs = Label "xs"
---     cond = Eq (apply suffix p (xs :: Patt C)) (Const I.true)
+--     app = Fun "append" $ I.pair' (\xs ys -> [I.append xs ys])
 
 
--- | Check if the item contains a given suffix.
-suffix :: Patt -> Patt
+-- -- -- -- | Match any suffix that satisfies the given suffix pattern.
+-- -- -- suffix :: (Patt repr) => repr [a] -> repr [a]
+-- -- -- suffix p = fix $ choice p (any .: rec)
+-- --
+-- --
+-- -- -- | Check if the item contains a given suffix.
+-- -- -- suffix :: (Patt repr) => repr [a] -> repr [a]
+-- -- suffixP :: Patt C -> Patt M
+-- -- suffixP p =
+-- --   xs `Seq` Guard cond
+-- --   where
+-- --     xs = Label "xs"
+-- --     cond = Eq (apply suffix p (xs :: Patt C)) (Const I.true)
+
+
+-- | Check if the list contains a given suffix.
+suffix :: Ty Patt [a] -> Ty Patt [a]
 suffix p =
 
   xs & check cond
@@ -519,9 +507,10 @@ suffix p =
   where
 
     xs = var "xs"
-    cond = Eq (apply fun $ pair p xs) (I.true P)
+    -- TODO: Define `eq` with appropriate type safeness properties?
+    cond = Eq (unTy $ hasSuffix p xs) (unTy $ I.true P)
 
-    fun = Fun "suffix" $ I.pair' (\xs ys -> [I.suffix xs ys])
+    -- fun = Fun "suffix" $ I.pair' (\xs ys -> [I.suffix xs ys])
+    hasSuffix = name2 "suffix" I.suffix
 
-    check = O . Guard
-    apply f e = O $ Apply f e
+    check = Ty . O . Guard
