@@ -37,6 +37,9 @@ module ParComp.Patt.Typed
   , cons
   , list'
   , unList
+
+  -- * Provisional
+  -- TODO: move to a utility module
   , append
   , suffix
 

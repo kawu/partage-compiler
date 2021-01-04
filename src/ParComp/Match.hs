@@ -5,6 +5,8 @@
 
 -- | Pattern matching
 
+-- TODO: Rename as `ParComp.Patt.Match`?
+
 
 module ParComp.Match
   ( MatchT
