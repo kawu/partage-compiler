@@ -20,6 +20,7 @@ module ParComp.Match
   , fromItem
   , runCompile
   , runCompileTy
+  , runCompileTy2
   ) where
 
 
@@ -458,6 +459,59 @@ runCompileTy f x =
 -- isMatch :: (P.MonadIO m) => Patt -> Item -> m Bool
 -- isMatch p x =
 --   not <$> P.null (P.enumerate (doMatch p x))
+
+
+_compile2 :: P.MonadIO m => (Patt -> Patt -> Patt) -> Item -> Item -> MatchT m Item
+_compile2 f x y =
+  close (f (fromItem_ x) (fromItem_ y))
+
+
+-- compile :: P.MonadIO m => (Ty Patt a -> Ty Patt b) -> Ty Item a -> MatchT m (Ty Item b)
+-- compile f x =
+--   Ty <$> close (unTy $ f (fromItem x))
+
+
+-- | Lower-level handler-based `doCompile`.
+_doCompile2
+  :: (P.MonadIO m)
+  => (Patt -> Patt -> Patt)
+  -> Item
+  -> Item
+  -> (Item -> m ()) -- ^ Monadic handler
+  -> m ()
+_doCompile2 f x y h = _toListT (_compile2 f x y) h
+
+
+-- | Perform compilation and generate the list of possible global variable
+-- binding environments which satisfy the match.
+doCompile2 :: (P.MonadIO m) => (Patt -> Patt -> Patt) -> Item -> Item -> P.ListT m Item
+doCompile2 f x y = do
+  P.Select $
+    _doCompile2 f x y P.yield
+
+
+runCompile2 :: (P.MonadIO m) => (Patt -> Patt -> Patt) -> Item -> Item -> m [Item]
+runCompile2 f x y = P.toListM . P.enumerate $ doCompile2 f x y
+
+
+_runCompileTy2
+  :: (P.MonadIO m)
+  => (Ty Patt a -> Ty Patt b -> Ty Patt c)
+  -> Ty Item a -> Ty Item b -> m [Ty Item c]
+_runCompileTy2 f x y =
+  map Ty <$> runCompile2 g (unTy x) (unTy y)
+  where
+    g :: Patt -> Patt -> Patt
+    g x y = unTy $ f (Ty x) (Ty y)
+
+
+runCompileTy2
+  :: (IsItem a, IsItem b, IsItem c, P.MonadIO m)
+  => (Ty Patt a -> Ty Patt b -> Ty Patt c)
+  -> a -> b
+  -> m [c]
+runCompileTy2 f x y =
+  map decode <$> _runCompileTy2 f (encode I x) (encode I y)
 
 
 --------------------------------------------------
