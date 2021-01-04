@@ -15,10 +15,15 @@ module ParComp.Match
   , match
   , close
   , check
+
+  -- * Provisional
+  , fromItem
+  , runCompile
+  , runCompileTy
   ) where
 
 
-import           Control.Monad (guard, void, forM_)
+import           Control.Monad (guard, void, forM_, forM)
 import qualified Control.Monad.RWS.Strict as RWS
 import           Control.Applicative (Alternative, (<|>), empty)
 
@@ -27,11 +32,17 @@ import qualified Pipes.Prelude as P
 
 import           Data.Lens.Light
 
+import qualified Data.Text as T
+import qualified Data.Set as S
 import qualified Data.Map.Strict as M
 import qualified Data.Primitive.Array as A
 
+import qualified ParComp.ItemBis as I
 import           ParComp.ItemBis
-  (Term (..), Item (..), Var, Fun (..), Op (..), Cond (..), Patt (..))
+  ( Term (..), Item (..), Var (..), Fun (..), PattFun(..)
+  , Op (..), Cond (..), Patt (..), Ty (..)
+  , IsItem (..)
+  )
 
 
 --------------------------------------------------
@@ -47,14 +58,8 @@ type Env v = M.Map v Item
 data PMState = PMState
   { _genv :: Env Var
     -- ^ Variable binding environment
---    , _funMap :: M.Map FunName (Item -> [Item])
---      -- ^ Registered functions
---   , _lenv :: Env LVar
---     -- ^ Local variable binding environment
---   , _fix :: Maybe Pattern
---     -- ^ Fixed recursive pattern
---   , _penv :: Env Pattern
---     -- ^ Pattern binding environment (only relevant for lazy matching)
+  , _varGenIx :: Int
+    -- ^ Variable index used for fresh variable generation
   }
 $( makeLenses [''PMState] )
 
@@ -70,6 +75,11 @@ $( makeLenses [''PMState] )
 -- | Pattern matching monad transformer
 type MatchT m a =
   P.ListT (RWS.RWST () () PMState m) a
+
+
+-- | Empty state, with no variable bindings
+emptyState :: PMState
+emptyState = PMState M.empty 0
 
 
 -- | Lift the computation in the inner monad to `MatchT`.
@@ -108,6 +118,19 @@ alt m1 m2 = do
     m2
 
 
+-- -- | Perform pattern matching in a clear environment.
+-- withClearEnv
+--   :: (P.MonadIO m)
+--   => MatchT m a
+--   -> MatchT m a
+-- withClearEnv m = do
+--   e <- RWS.get
+--   RWS.put emptyState
+--   -- The second branch of the alternative makes sure to restore the environment
+--   -- even if the first branch fails; not sure it's completely necessary, though
+--   (m <* RWS.put e) <|> (RWS.put e >> empty)
+
+
 -- | Run pattern matching computation with the underlying functions and
 -- predicates.
 runMatchT
@@ -116,7 +139,19 @@ runMatchT
   -> m ()
 runMatchT m = void $
   RWS.evalRWST (P.runListT m) ()
-    (PMState M.empty)
+    emptyState
+
+
+-- | Generate a fresh variable
+freshVar :: (Monad m) => MatchT m Var
+freshVar = do
+  ix <- RWS.gets $ getL varGenIx
+  let newVar = V $ T.pack (show ix)
+      _MAXVAR = 10 ^ 9  -- NB: could use `maxBound` instead
+  RWS.modify' $ modL varGenIx (\x -> (x `mod` _MAXVAR) + 1)
+  lookupVar newVar >>= \case
+    Nothing -> return newVar
+    Just _  -> freshVar
 
 
 -- | Look up the value assigned to the global variable.
@@ -146,10 +181,19 @@ bindVar
   -> Item
   -> MatchT m ()
 bindVar v it = do
-  mayIt <- RWS.lift $ RWS.gets (M.lookup v . getL genv)
+  mayIt <- RWS.gets (M.lookup v . getL genv)
   case mayIt of
     Nothing -> RWS.modify' . modL genv $ M.insert v it
     Just it' -> guard $ it == it'
+
+
+-- | Discard (unbind) the variable.
+ditchVar
+  :: (Monad m)
+  => Var
+  -> MatchT m ()
+ditchVar v = do
+  RWS.modify' . modL genv $ M.delete v
 
 
 --  -- | Retrieve the function with a given name.  The function with the name must
@@ -317,6 +361,103 @@ close (O p) =
       x <- close p'
       y <- each $ fbody f x
       return y
+    ApplyP f xs -> do
+      -- Replace all variables in function `f` with fresh variables
+      let oldVars = I.varsInFun f
+      varMap <- fmap M.fromList . forM (S.toList oldVars) $ \v -> do
+        local <- freshVar
+        return (v, local)
+      let f' = I.replaceFunVars varMap f
+      -- Evaluate the argument patterns
+      args <- mapM close xs
+      -- Match the formal parameters of the functions with the arguments
+      forM_ (zip (pfParams f') args) $ \(param, arg) -> do
+        match param arg
+      -- Evaluate the body of the function and discard the local variables
+      close (pfBody f') <|> do
+        forM_ (M.toList varMap) $ \(_, local) -> do
+          ditchVar local
+        empty
+    Assign p q -> do
+      x <- close q
+      match p x >> pure (I Unit)
+    Guard c -> check c >> pure (I Unit)
+
+    -- Things that should not happen
+    Any -> error "close Any"
+
+
+--------------------------------------------------
+-- Provisional
+--------------------------------------------------
+
+
+fromItem_ :: Item -> Patt
+fromItem_ x =
+  case x of
+    I Unit -> P Unit
+    I (Sym x) -> P (Sym x)
+    I (Tag k p) -> P (Tag k (fromItem_ p))
+    I (Vec v) -> P (Vec $ fmap fromItem_ v)
+
+
+fromItem :: Ty Item a -> Ty Patt a
+fromItem = Ty . fromItem_ . unTy
+
+
+compile_ :: P.MonadIO m => (Patt -> Patt) -> Item -> MatchT m Item
+compile_ f x =
+  close (f (fromItem_ x))
+
+
+compile :: P.MonadIO m => (Ty Patt a -> Ty Patt b) -> Ty Item a -> MatchT m (Ty Item b)
+compile f x =
+  Ty <$> close (unTy $ f (fromItem x))
+
+
+-- | Lower-level handler-based `doCompile`.
+_doCompile
+  :: (P.MonadIO m)
+  => (Patt -> Patt)
+  -> Item
+  -> (Item -> m ()) -- ^ Monadic handler
+  -> m ()
+_doCompile f x h = _toListT (compile_ f x) h
+
+
+-- | Perform compilation and generate the list of possible global variable
+-- binding environments which satisfy the match.
+doCompile :: (P.MonadIO m) => (Patt -> Patt) -> Item -> P.ListT m Item
+doCompile f x = do
+  P.Select $
+    _doCompile f x P.yield
+
+
+runCompile :: (P.MonadIO m) => (Patt -> Patt) -> Item -> m [Item]
+runCompile f x = P.toListM . P.enumerate $ doCompile f x
+
+
+runCompileTy_ :: (P.MonadIO m) => (Ty Patt a -> Ty Patt b) -> Ty Item a -> m [Ty Item b]
+runCompileTy_ f x =
+  map Ty <$> runCompile g (unTy x)
+  where
+    g :: Patt -> Patt
+    g = unTy . f . Ty
+
+
+runCompileTy
+  :: (IsItem a, IsItem b, P.MonadIO m)
+  => (Ty Patt a -> Ty Patt b)
+  -> a
+  -> m [b]
+runCompileTy f x =
+  map decode <$> runCompileTy_ f (encode I x)
+
+
+-- -- | Check if the pattern matches with the given item.
+-- isMatch :: (P.MonadIO m) => Patt -> Item -> m Bool
+-- isMatch p x =
+--   not <$> P.null (P.enumerate (doMatch p x))
 
 
 --------------------------------------------------

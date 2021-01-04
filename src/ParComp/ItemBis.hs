@@ -14,8 +14,14 @@ module ParComp.ItemBis
   , Ty (..)
   , Item (..)
 
-  , Fun (..)
+  -- * Functions
   , FunName (..)
+  , Fun (..)
+  , PattFun (..)
+  , varsIn
+  , varsInFun
+  , replaceVars
+  , replaceFunVars
 
   , Var (..)
   , Op (..)
@@ -58,6 +64,9 @@ module ParComp.ItemBis
   ) where
 
 
+import qualified Data.Set as S
+import qualified Data.Foldable as F
+import qualified Data.Map.Strict as M
 import qualified Data.Text as T
 import qualified Data.Primitive.Array as A
 import           Data.String (IsString)
@@ -95,7 +104,7 @@ newtype Item = I {unI :: Term Item}
 
 
 --------------------------------------------------
--- Functions
+-- Host/foreign functions
 --------------------------------------------------
 
 
@@ -106,7 +115,7 @@ newtype FunName = FunName {unFunName :: T.Text}
 instance Show FunName where
   show = T.unpack . unFunName
 
--- | Named function
+-- | Named host/foreign function
 data Fun = Fun
   { fname :: FunName
     -- ^ The function's name
@@ -122,6 +131,102 @@ instance Eq Fun where
 
 instance Ord Fun where
   x `compare` y = fname x `compare` fname y
+
+
+---------------------------------------------------
+-- Native functions
+---------------------------------------------------
+
+
+-- | Native, pattern-level function
+data PattFun = PattFun
+  { pfParams :: [Patt]
+    -- ^ Formal parameters of a function
+  , pfBody :: Patt
+    -- ^ The body of a function is represented by a pattern which gets evaluated
+    -- once the formal parameters are matched with the function's arguments
+  } deriving (Show, Eq, Ord)
+
+
+-- | Determine (non-recursively) the set of variables used in a function.
+--
+-- NOTE: This function is not recursive in the sense that, if there are function
+-- applications embedded in its body, their variables will not be considered.
+-- The same applies to `varsIn`, `replaceVars` and `replaceFunVars`.
+varsInFun :: PattFun -> S.Set Var
+varsInFun PattFun{..} =
+  S.unions (map varsIn pfParams) `S.union`
+  varsIn pfBody
+
+
+-- | Determine the set of variables used in a pattern.
+varsIn :: Patt -> S.Set Var
+varsIn (P p) =
+  case p of
+    Unit -> S.empty
+    Sym _ -> S.empty
+    Vec v -> S.unions (map varsIn $ F.toList v)
+    Tag _ p' -> varsIn p'
+varsIn (O p) =
+  case p of
+    Var v -> S.singleton v
+    Any -> S.empty
+    Select _ p' -> varsIn p'
+    Focus _ p' -> varsIn p'
+    Seq p1 p2 -> varsIn p1 `S.union` varsIn p2
+    Choice p1 p2 -> varsIn p1 `S.union` varsIn p2
+    Apply _ p' -> varsIn p'
+    -- NOTE: the embedded function is ignored due to non-recursivity
+    ApplyP _f xs -> S.unions (map varsIn xs)
+    Assign p q -> varsIn p `S.union` varsIn q
+    Guard c -> varsInCond c
+
+
+-- | Determine the set of variables used in a pattern.
+varsInCond :: Cond Patt -> S.Set Var
+varsInCond (Eq p q) = varsIn p `S.union` varsIn q
+varsInCond (And x y) = varsInCond x `S.union` varsInCond y
+varsInCond (Or x y) = varsInCond x `S.union` varsInCond y
+
+
+-- | Substitute variables in a pattern.
+replaceVars :: M.Map Var Var -> Patt -> Patt
+replaceVars varMap (P p) =
+  P $ case p of
+    Unit -> Unit
+    Sym x -> Sym x
+    Vec v -> Vec . A.fromList $ map (replaceVars varMap) (F.toList v)
+    Tag k p' -> Tag k $ replaceVars varMap p'
+replaceVars varMap (O p) =
+  O $ case p of
+    Var v -> Var $ varMap M.! v
+    Any -> Any
+    Select k p' -> Select k (replaceVars varMap p')
+    Focus k p' -> Focus k (replaceVars varMap p')
+    Seq p1 p2 -> Seq (replaceVars varMap p1) (replaceVars varMap p2)
+    Choice p1 p2 -> Choice (replaceVars varMap p1) (replaceVars varMap p2)
+    Apply f p' -> Apply f (replaceVars varMap p')
+    -- NOTE: the embedded function is ignored due to non-recursivity
+    ApplyP f xs -> ApplyP f (map (replaceVars varMap) xs)
+    Assign p q -> Assign (replaceVars varMap p) (replaceVars varMap q)
+    Guard c -> Guard $ replaceCondVars varMap c
+
+
+-- | Substitute variables in a condition.
+replaceCondVars :: M.Map Var Var -> Cond Patt -> Cond Patt
+replaceCondVars varMap c =
+  case c of
+    Eq p q -> Eq (replaceVars varMap p) (replaceVars varMap q)
+    And x y -> And (replaceCondVars varMap x) (replaceCondVars varMap y)
+    Or x y -> Or (replaceCondVars varMap x) (replaceCondVars varMap y)
+
+
+-- | Substitute variables in a function.
+replaceFunVars :: M.Map Var Var -> PattFun -> PattFun
+replaceFunVars varMap PattFun{..} = PattFun
+  { pfParams = map (replaceVars varMap) pfParams
+  , pfBody = replaceVars varMap pfBody
+  }
 
 
 --------------------------------------------------
@@ -155,8 +260,10 @@ data Op e where
   -- patterns.  `Choice` provides non-determinism in pattern matching.
   Choice  :: e -> e -> Op e
 
-  -- | Apply function to a pattern
+  -- | Apply (foreign?) function to a pattern
   Apply   :: Fun -> e -> Op e
+  -- | Apply (native?) function to a list of arguments
+  ApplyP   :: PattFun -> [e] -> Op e
   -- | Pattern assignment
   Assign  :: e -> e -> Op e
 
