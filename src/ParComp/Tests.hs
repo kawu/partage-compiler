@@ -7,11 +7,10 @@
 module ParComp.Tests where
 
 
-import qualified ParComp.ItemBis as I
-import           ParComp.ItemBis
-  ( Term (..), Item (..), Var, Fun (..), PattFun(..)
-  , Op (..), Cond (..), Patt (..), Ty (..), FunName
-  )
+import           ParComp.Patt.Core
+  (Var, PattFun(..), Op(..), Cond(..), Patt(..))
+import qualified ParComp.Patt.Typed as P
+import           ParComp.Patt.Typed (Ty (..))
 import qualified ParComp.Match as X
 
 
@@ -61,8 +60,8 @@ cons2 = withArg $ \xs ->
   (assign (cons two anyp) xs & cons two xs) |||
   xs
   where
-    one = I.encode P 1
-    two = I.encode P 2
+    one = P.encode P 1
+    two = P.encode P 2
 
 
 append :: Ty Patt [a] -> Ty Patt [a] -> Ty Patt [a]
@@ -83,17 +82,17 @@ assign (Ty x) (Ty v) = Ty . O $ Assign x v
 
 -- | Pair pattern
 pair :: Ty Patt a -> Ty Patt b -> Ty Patt (a, b)
-pair = I.pair P
+pair = P.pair P
 
 
 -- | Cons (list) pattern
 cons :: Ty Patt a -> Ty Patt [a] -> Ty Patt [a]
-cons = I.cons P
+cons = P.cons P
 
 
 -- | Empty list
 nil :: Ty Patt [a]
-nil = I.nil P
+nil = P.nil P
 
 
 -- | Wildcard pattern

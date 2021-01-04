@@ -13,7 +13,7 @@ module ParComp.Match
   , isMatch
 
   , match
-  , close
+  , eval
   , check
 
   -- * Provisional
@@ -38,12 +38,12 @@ import qualified Data.Set as S
 import qualified Data.Map.Strict as M
 import qualified Data.Primitive.Array as A
 
-import qualified ParComp.ItemBis as I
-import           ParComp.ItemBis
+import qualified ParComp.Patt.Core as C
+import           ParComp.Patt.Core
   ( Term (..), Item (..), Var (..), Fun (..), PattFun(..)
-  , Op (..), Cond (..), Patt (..), Ty (..)
-  , IsItem (..)
+  , Op (..), Cond (..), Patt (..)
   )
+import           ParComp.Patt.Typed (Ty (..), IsItem (..))
 
 
 --------------------------------------------------
@@ -309,7 +309,7 @@ match (O p) it =
       match y it
     Guard c -> check c
     Assign p q -> do
-      x <- close q
+      x <- eval q
       match p x
 
 
@@ -317,8 +317,8 @@ match (O p) it =
 check :: (P.MonadIO m) => Cond Patt -> MatchT m ()
 check = \case
   Eq px py  -> do
-    x <- close px
-    y <- close py
+    x <- eval px
+    y <- eval py
     guard $ x == y
   And cx cy -> check cx >> check cy
   Or cx cy -> do
@@ -335,57 +335,54 @@ check = \case
 --   Or cx cy -> checkStrict cx <|> checkStrict cy
 
 
--- | Convert the pattern to the corresponding item expression.  This is only
--- possible if the pattern contains no free variables nor wildcard patterns.
--- See also `strip`.
+-- | Evaluate a pattern with no free variables nor wildcard patterns.
 --
--- Note that `close` should not modify the underlying state/environment.
+-- NOTE: The function should not modify the underlying state/environment.
 --
-close :: (P.MonadIO m) => Patt -> MatchT m Item
-close (P p) =
+eval :: (P.MonadIO m) => Patt -> MatchT m Item
+eval (P p) =
   case p of
     Unit -> pure (I Unit)
     Sym x -> pure . I $ Sym x
-    Vec v -> I . Vec <$> mapM close v
-    Tag k p' -> I . Tag k <$> close p'
-close (O p) =
+    Vec v -> I . Vec <$> mapM eval v
+    Tag k p' -> I . Tag k <$> eval p'
+eval (O p) =
   case p of
     Var v -> retrieveVar v
     -- Const it -> pure it
-    Seq p1 p2 -> close p1 >> close p2
+    Seq p1 p2 -> eval p1 >> eval p2
     Choice p1 p2 ->
-      -- NB: `alt` is not necessary, because `close` doesn't modify the state
-      close p1 <|> close p2
+      -- NB: `alt` is not necessary, because `eval` doesn't modify the state
+      eval p1 <|> eval p2
     -- Apply fname p' -> do
     Apply f p' -> do
       -- f <- retrieveFun fname
-      x <- close p'
+      x <- eval p'
       y <- each $ fbody f x
       return y
     ApplyP f xs -> do
       -- Replace all variables in function `f` with fresh variables
-      let oldVars = I.varsInFun f
+      let oldVars = C.varsInFun f
       varMap <- fmap M.fromList . forM (S.toList oldVars) $ \v -> do
         local <- freshVar
         return (v, local)
-      let f' = I.replaceFunVars varMap f
+      let f' = C.replaceFunVars varMap f
       -- Evaluate the argument patterns
-      args <- mapM close xs
+      args <- mapM eval xs
       -- Match the formal parameters of the functions with the arguments
-      forM_ (zip (pfParams f') args) $ \(param, arg) -> do
-        match param arg
+      mapM_ (uncurry match) (zip (pfParams f') args)
       -- Evaluate the body of the function and discard the local variables
-      close (pfBody f') <|> do
+      eval (pfBody f') <|> do
         forM_ (M.toList varMap) $ \(_, local) -> do
           ditchVar local
         empty
     Assign p q -> do
-      x <- close q
+      x <- eval q
       match p x >> pure (I Unit)
     Guard c -> check c >> pure (I Unit)
 
     -- Things that should not happen
-    Any -> error "close Any"
+    Any -> error "eval Any"
 
 
 --------------------------------------------------
@@ -408,12 +405,12 @@ fromItem = Ty . fromItem_ . unTy
 
 compile_ :: P.MonadIO m => (Patt -> Patt) -> Item -> MatchT m Item
 compile_ f x =
-  close (f (fromItem_ x))
+  eval (f (fromItem_ x))
 
 
 compile :: P.MonadIO m => (Ty Patt a -> Ty Patt b) -> Ty Item a -> MatchT m (Ty Item b)
 compile f x =
-  Ty <$> close (unTy $ f (fromItem x))
+  Ty <$> eval (unTy $ f (fromItem x))
 
 
 -- | Lower-level handler-based `doCompile`.
@@ -463,12 +460,12 @@ runCompileTy f x =
 
 _compile2 :: P.MonadIO m => (Patt -> Patt -> Patt) -> Item -> Item -> MatchT m Item
 _compile2 f x y =
-  close (f (fromItem_ x) (fromItem_ y))
+  eval (f (fromItem_ x) (fromItem_ y))
 
 
 -- compile :: P.MonadIO m => (Ty Patt a -> Ty Patt b) -> Ty Item a -> MatchT m (Ty Item b)
 -- compile f x =
---   Ty <$> close (unTy $ f (fromItem x))
+--   Ty <$> eval (unTy $ f (fromItem x))
 
 
 -- | Lower-level handler-based `doCompile`.

@@ -14,7 +14,7 @@ import           Control.Monad (guard)
 
 import qualified Pipes as P
 
-import           ParComp.ItemBis (Item (..), Patt, Cond)
+import           ParComp.Patt.Core (Item (..), Patt, Cond)
 import qualified ParComp.Match as Un
 import           ParComp.Match (MatchT)
 
@@ -51,4 +51,4 @@ apply Rule{..} items = do
   -- Make sure the side condition holds
   Un.check condition
   -- Convert the consequent to the resulting item
-  Un.close consequent
+  Un.eval consequent

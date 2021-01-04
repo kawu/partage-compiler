@@ -20,8 +20,8 @@ import qualified Data.Text.IO as T
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 
-import qualified ParComp.ItemBis as I
-import qualified ParComp.Match as Un
+import qualified ParComp.Patt.Core as C
+import qualified ParComp.Match as Match
 -- import qualified ParComp.Pattern.Typed as Ty
 -- import           ParComp.Pattern.Typed (Pattern(..), Patt(..))
 import qualified ParComp.Pattern.RuleBis as R
@@ -29,8 +29,8 @@ import qualified ParComp.Pattern.RuleBis as R
 
 -- | State of the parser
 data State = State
-  { agenda :: S.Set I.Item
-  , chart :: S.Set I.Item
+  { agenda :: S.Set C.Item
+  , chart :: S.Set C.Item
   } deriving (Show, Eq, Ord)
 
 
@@ -40,7 +40,7 @@ emptyState = State S.empty S.empty
 
 
 -- | Remove an item from agenda
-popFromAgenda :: (Monad m) => ST.StateT State m (Maybe I.Item)
+popFromAgenda :: (Monad m) => ST.StateT State m (Maybe C.Item)
 popFromAgenda = do
   st@State{..} <- ST.get
   case S.minView agenda of
@@ -51,21 +51,21 @@ popFromAgenda = do
 
 
 -- | Remove an item from agenda
-addToAgenda :: (Monad m) => I.Item -> ST.StateT State m ()
+addToAgenda :: (Monad m) => C.Item -> ST.StateT State m ()
 addToAgenda x = do
   ST.modify' $ \st -> st
     { agenda = S.insert x (agenda st) }
 
 
 -- | Remove an item from agenda
-addToChart :: (Monad m) => I.Item -> ST.StateT State m ()
+addToChart :: (Monad m) => C.Item -> ST.StateT State m ()
 addToChart x = do
   ST.modify' $ \st -> st
     { chart = S.insert x (chart st) }
 
 
 -- | Retrieve the chart subsets of the given length
-chartSubsets :: (Monad m) => Int -> ST.StateT State m [[I.Item]]
+chartSubsets :: (Monad m) => Int -> ST.StateT State m [[C.Item]]
 chartSubsets k = do
   ch <- ST.gets chart
   return $ subsets k (S.toList ch)
@@ -107,13 +107,13 @@ inject x (x' : xs) =
 
 -- | Perform chart parsing with the given grammar and deduction rules.
 chartParse
-  :: [I.Item]
+  :: [C.Item]
     -- ^ Axiom-generated items
   -> M.Map T.Text R.Rule
     -- ^ Named deduction rules
-  -> I.Patt
+  -> C.Patt
     -- ^ Pattern the final item should match
-  -> IO (Maybe I.Item)
+  -> IO (Maybe C.Item)
 chartParse baseItems ruleMap finalPatt =
 
   flip ST.evalStateT emptyState $ do
@@ -132,7 +132,7 @@ chartParse baseItems ruleMap finalPatt =
       popFromAgenda >>= \case
         Nothing -> return Nothing
         Just item -> do
-          final <- liftIO $ Un.isMatch finalPatt item
+          final <- liftIO $ Match.isMatch finalPatt item
           if final
              then do
                addToChart item
@@ -164,9 +164,9 @@ chartParse baseItems ruleMap finalPatt =
 --             ST.liftIO $ do
 --               T.putStr "# Matching: "
 --               print items'
-            Un.runMatchT $ do
+            Match.runMatchT $ do
               result <- R.apply rule items'
-              Un.lift $ addToAgenda result
+              Match.lift $ addToAgenda result
               -- We managed to apply a rule!
 --               ST.liftIO $ do
 --                 T.putStr "# "

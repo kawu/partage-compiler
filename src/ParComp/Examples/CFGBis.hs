@@ -20,9 +20,10 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import           Data.String (fromString)
 
-import qualified ParComp.ItemBis as I
-import           ParComp.ItemBis
-  (Ty (..), Item (..), Op (..), Patt (..), Cond (..), Fun (..), FunName (..))
+import           ParComp.Patt.Core
+  (Item (..), Op (..), Patt (..), Cond (..), Fun (..), FunName (..))
+import qualified ParComp.Patt.Typed as I
+import           ParComp.Patt.Typed (Ty (..))
 import           ParComp.Pattern.RuleBis (Rule (..))
 
 -- import           ParComp.Pattern.Untyped (Fun(..))
