@@ -52,23 +52,18 @@ import qualified Data.Text as T
 import qualified Data.Primitive.Array as A
 
 import           ParComp.Patt.Core
-  (Term (..), Item (..), Patt (..), Op (..), Cond (..))
+  (Term (..), Item (..))
+
+
+--------------------------------------------------
+-- Types
+--------------------------------------------------
 
 
 -- | Typed expression
 newtype Ty expr a = Ty {unTy :: expr}
   deriving (Eq, Ord)
   deriving newtype (Show)
-
-
---------------------------------------------------
--- Smart constructors
---------------------------------------------------
-
-
---------------------------------------------------
--- Types
---------------------------------------------------
 
 
 -- | Unit
@@ -167,6 +162,16 @@ nil mk = Ty . mk . Tag 0 $ mk Unit
 -- | `x:xs`
 cons :: (Term e -> e) -> Ty e a -> Ty e [a] -> Ty e [a]
 cons mk (Ty x) (Ty xs) = Ty . mk . Tag 1 . mk . Vec $ A.fromListN 2 [x, xs]
+
+
+-- -- | NOTE: This implementation is not good, since the `lst` pattern might not
+-- -- | be normalized to a list.
+-- list :: b -> (Ty Patt a -> Ty Patt [a] -> b) -> Ty Patt [a] -> b
+-- list n c (Ty lst) =
+--   case lst of
+--     P (Tag 0 _) -> n
+--     P (Tag 1 ( P (Vec v))) -> c (Ty $ A.indexArray v 0) (Ty $ A.indexArray v 1)
+--     x -> error $ "This can actually happen:" ++ show x
 
 
 -- | TODO

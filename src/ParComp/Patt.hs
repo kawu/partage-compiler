@@ -14,6 +14,7 @@ module ParComp.Patt
   (
   -- * Basic types from the core module
     Patt (..)
+  , PattFun (..)
 
   -- * Re-export the typed pattern-matching module
   , module ParComp.Patt.Typed
@@ -26,6 +27,14 @@ module ParComp.Patt
   , assign
   , check
   , eq
+
+  -- * Functions
+  , with1arg
+  , with2arg
+  , apply1
+  , apply2
+  , compile1
+  , compile2
   ) where
 
 
@@ -50,6 +59,7 @@ import           ParComp.Patt.Typed
 
 
 -- | Variable pattern
+-- TODO: Make sure that special variable names ("arg@...") are not used.
 var :: String -> Ty Patt a
 var = Ty . O . Var . fromString
 
@@ -60,7 +70,7 @@ anyp = Ty $ O Any
 
 
 -- | Sequential pattern matching
-seqp :: Ty Patt a -> Ty Patt a -> Ty Patt a
+seqp :: Ty Patt a -> Ty Patt b -> Ty Patt b
 seqp (Ty p) (Ty q) = Ty . O $ Seq p q
 
 
@@ -79,12 +89,10 @@ check :: Cond Patt -> Ty Patt ()
 check = Ty . O . Guard
 
 
--- | Equality check
-eq :: Eq a => Ty Patt a -> Ty Patt a -> Cond Patt
+-- | Equality check (NB: `Eq` constraint is not required since all types of
+-- items can be compared)
+eq :: Ty Patt a -> Ty Patt a -> Cond Patt
 eq (Ty p) (Ty q) = Eq p q
-
-
--- TODO: Apply, ApplyP?
 
 
 --------------------------------------------------
@@ -107,8 +115,8 @@ with1arg f =
 
 -- | Make a typed pattern-level function from a given pattern-to-pattern
 -- function.
-with2args :: (Ty Patt a -> Ty Patt b -> Ty Patt c) -> Ty PattFun (a -> b -> c)
-with2args f =
+with2arg :: (Ty Patt a -> Ty Patt b -> Ty Patt c) -> Ty PattFun (a -> b -> c)
+with2arg f =
   -- TODO: Make sure function `f` does not already contain variable "arg@1"!
   Ty $ PattFun [unTy arg1, unTy arg2] (unTy $ f arg1 arg2)
   where
