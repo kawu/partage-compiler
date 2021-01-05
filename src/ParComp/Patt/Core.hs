@@ -78,7 +78,7 @@ instance Show FunName where
 data ForeignFun = ForeignFun
   { fname :: FunName
     -- ^ The function's name
-  , fbody :: Item -> [Item]
+  , fbody :: [Item] -> [Item]
     -- ^ The function itself (non-deterministic)
   }
 
@@ -134,7 +134,7 @@ varsIn (O p) =
     Focus _ p' -> varsIn p'
     Seq p1 p2 -> varsIn p1 `S.union` varsIn p2
     Choice p1 p2 -> varsIn p1 `S.union` varsIn p2
-    Apply _ p' -> varsIn p'
+    Apply _ xs -> S.unions (map varsIn xs)
     -- NOTE: the embedded function is ignored due to non-recursivity
     ApplyP _f xs -> S.unions (map varsIn xs)
     Assign p q -> varsIn p `S.union` varsIn q
@@ -164,7 +164,7 @@ replaceVars varMap (O p) =
     Focus k p' -> Focus k (replaceVars varMap p')
     Seq p1 p2 -> Seq (replaceVars varMap p1) (replaceVars varMap p2)
     Choice p1 p2 -> Choice (replaceVars varMap p1) (replaceVars varMap p2)
-    Apply f p' -> Apply f (replaceVars varMap p')
+    Apply f p' -> Apply f (map (replaceVars varMap) p')
     -- NOTE: the embedded function is ignored due to non-recursivity
     ApplyP f xs -> ApplyP f (map (replaceVars varMap) xs)
     Assign p q -> Assign (replaceVars varMap p) (replaceVars varMap q)
@@ -220,7 +220,7 @@ data Op e where
   Choice  :: e -> e -> Op e
 
   -- | Apply (foreign?) function to a pattern
-  Apply   :: ForeignFun -> e -> Op e
+  Apply   :: ForeignFun -> [e] -> Op e
   -- | Apply (native?) function to a list of arguments
   ApplyP   :: PattFun -> [e] -> Op e
   -- | Pattern assignment

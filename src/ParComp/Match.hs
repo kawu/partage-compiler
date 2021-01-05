@@ -351,10 +351,9 @@ eval (O p) =
       -- NB: `alt` is not necessary, because `eval` doesn't modify the state
       eval p1 <|> eval p2
     -- Apply fname p' -> do
-    Apply f p' -> do
-      -- f <- retrieveFun fname
-      x <- eval p'
-      y <- each $ fbody f x
+    Apply f xs -> do
+      args <- mapM eval xs
+      y <- each $ fbody f args
       return y
     ApplyP f xs -> do
       -- Replace all variables in function `f` with fresh variables

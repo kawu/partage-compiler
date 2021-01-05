@@ -272,11 +272,20 @@ compile2 (Ty f) x y =
 --------------------------------------------------
 
 
--- | Declare a named foreign function and lift it to a pattern-level function
-foreign1arg :: FunName -> (Ty Item a -> Ty Item b) -> Ty Patt a -> Ty Patt b
+foreign1arg
+  :: FunName
+  -> (Ty Item a -> Ty Item b)
+  -> Ty Patt a -> Ty Patt b
 foreign1arg funName f =
-  let named = ForeignFun funName $ \x -> [unTy $ f $ Ty x]
-   in Ty . O . Apply named . unTy
+  let named = ForeignFun funName $ \[x] -> [unTy $ f (Ty x)]
+   in \x -> Ty . O $ Apply named [unTy x]
+
+
+-- -- | Declare a named foreign function and lift it to a pattern-level function
+-- foreign1arg :: FunName -> (Ty Item a -> Ty Item b) -> Ty Patt a -> Ty Patt b
+-- foreign1arg funName f =
+--   let named = ForeignFun funName $ \x -> [unTy $ f $ Ty x]
+--    in Ty . O . Apply named . unTy
 
 
 -- | 2-argument variant of `foreign1arg`
@@ -285,5 +294,15 @@ foreign2arg
   -> (Ty Item a -> Ty Item b -> Ty Item c)
   -> Ty Patt a -> Ty Patt b -> Ty Patt c
 foreign2arg funName f =
-  let named = ForeignFun funName $ \x -> [unTy $ I.pairI f $ Ty x]
-   in \x y -> Ty . O . Apply named . unTy $ pair x y
+  let named = ForeignFun funName $ \[x, y] -> [unTy $ f (Ty x) (Ty y)]
+   in \x y -> Ty . O $ Apply named [unTy x, unTy y]
+
+
+-- -- | 2-argument variant of `foreign1arg`
+-- foreign2arg
+--   :: FunName
+--   -> (Ty Item a -> Ty Item b -> Ty Item c)
+--   -> Ty Patt a -> Ty Patt b -> Ty Patt c
+-- foreign2arg funName f =
+--   let named = ForeignFun funName $ \x -> [unTy $ I.pairI f $ Ty x]
+--    in \x y -> Ty . O . Apply named . unTy $ pair x y
