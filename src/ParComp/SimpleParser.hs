@@ -21,7 +21,6 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 
 import qualified ParComp.Patt.Core as C
-import qualified ParComp.Patt.RuleBis as R
 import qualified ParComp.Match as Match
 
 
@@ -107,7 +106,7 @@ inject x (x' : xs) =
 chartParse
   :: [C.Item]
     -- ^ Axiom-generated items
-  -> M.Map T.Text R.Rule
+  -> M.Map T.Text C.PattFun
     -- ^ Named deduction rules
   -> C.Patt
     -- ^ Pattern the final item should match
@@ -119,11 +118,6 @@ chartParse baseItems ruleMap finalPatt =
     processAgenda
 
   where
-
---     -- Untyped rules
---     ruleMap = M.fromList $ do
---       (name, typedRule) <- M.toList tyRuleMap
---       return (name, Ty.compileRule typedRule)
 
     -- Process agenda until empty, or until final item found
     processAgenda = do
@@ -151,7 +145,7 @@ chartParse baseItems ruleMap finalPatt =
 --           T.putStr "# Rule: "
 --           T.putStrLn ruleName
         -- For each chart subset
-        subs <- chartSubsets $ length (R.antecedents rule) - 1
+        subs <- chartSubsets $ length (C.pfParams rule) - 1
 --         ST.liftIO $ do
 --           T.putStr "# Subset: "
 --           print subs
@@ -163,7 +157,7 @@ chartParse baseItems ruleMap finalPatt =
 --               T.putStr "# Matching: "
 --               print items'
             Match.runMatchT $ do
-              result <- R.apply rule items'
+              result <- Match.apply rule items'
               Match.lift $ addToAgenda result
               -- We managed to apply a rule!
 --               ST.liftIO $ do

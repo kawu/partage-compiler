@@ -23,7 +23,6 @@ import           ParComp.Patt.Core (Item (..))
 
 import           ParComp.Patt
 import qualified ParComp.Patt.Item as I
-import           ParComp.Patt.RuleBis (Rule (..))
 
 import qualified ParComp.SimpleParser as SP
 
@@ -133,13 +132,12 @@ label =
 
 
 -- | CFG complete rule
-complete :: Rule
+complete :: PattFun
 complete =
 
-  Rule
-  { antecedents  = [unTy leftP, unTy rightP]
-  , consequent = unTy downP
-  , condition = condP
+  PattFun
+  { pfParams  = [unTy leftP, unTy rightP]
+  , pfBody = unTy downP
   }
 
   where
@@ -168,6 +166,8 @@ complete =
     rightP = item
       (rule v_C (suffix (dot .: nil)))
       (span v_j v_k)
+      `seqp`
+      check condP
 
     -- Side condition
     condP = eq (label v_B) (label v_C)
@@ -180,9 +180,9 @@ complete =
 
 
 -- | CFG predict rule
-predict :: Rule
+predict :: PattFun
 predict =
-  Rule [unTy leftP, unTy rightP] (unTy downP) condP
+  PattFun [unTy leftP, unTy rightP] (unTy downP)
   where
     leftP = item
       (rule anyp (var "body"))
@@ -191,8 +191,8 @@ predict =
       assign
         (pair anyp (dot .: just (var "B") .: anyp))
         (splitAtDot (var "body"))
-    rightP = top $
-      rule (var "C") (var "alpha")
+    rightP = top (rule (var "C") (var "alpha"))
+      `seqp` check condP
     condP = eq
       (label (var "B"))
       (label (var "C"))

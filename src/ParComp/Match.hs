@@ -16,11 +16,12 @@ module ParComp.Match
 
   , match
   , eval
+  , apply
   , check
   ) where
 
 
-import           Control.Monad (guard, void, forM_, forM)
+import           Control.Monad (when, guard, void, forM_, forM)
 import qualified Control.Monad.RWS.Strict as RWS
 import           Control.Applicative (Alternative, (<|>), empty)
 
@@ -356,21 +357,25 @@ eval (O p) =
       y <- each $ fbody f args
       return y
     ApplyP f xs -> do
-      -- Replace all variables in function `f` with fresh variables
-      let oldVars = C.varsInFun f
-      varMap <- fmap M.fromList . forM (S.toList oldVars) $ \v -> do
-        local <- freshVar
-        return (v, local)
-      let f' = C.replaceFunVars varMap f
       -- Evaluate the argument patterns
       args <- mapM eval xs
-      -- Match the formal parameters of the functions with the arguments
-      mapM_ (uncurry match) (zip (pfParams f') args)
-      -- Evaluate the body of the function and discard the local variables
-      eval (pfBody f') <|> do
-        forM_ (M.toList varMap) $ \(_, local) -> do
-          ditchVar local
-        empty
+      -- Apply the function
+      apply f args
+--       -- Replace all variables in function `f` with fresh variables
+--       let oldVars = C.varsInFun f
+--       varMap <- fmap M.fromList . forM (S.toList oldVars) $ \v -> do
+--         local <- freshVar
+--         return (v, local)
+--       let f' = C.replaceFunVars varMap f
+--       -- Evaluate the argument patterns
+--       args <- mapM eval xs
+--       -- Match the formal parameters of the functions with the arguments
+--       mapM_ (uncurry match) (zip (pfParams f') args)
+--       -- Evaluate the body of the function and discard the local variables
+--       eval (pfBody f') <|> do
+--         forM_ (M.toList varMap) $ \(_, local) -> do
+--           ditchVar local
+--         empty
     Assign p q -> do
       x <- eval q
       match p x >> pure (I Unit)
@@ -378,6 +383,28 @@ eval (O p) =
 
     -- Things that should not happen
     Any -> error "eval Any"
+
+
+-- | Apply a function to a given list of arguments.
+apply :: (P.MonadIO m) => PattFun -> [Item] -> MatchT m Item
+apply f args = do
+  when (length (pfParams f) /= length args) $
+    error "Match.apply: numbers of arguments and parameters differ"
+  -- Replace all variables in function `f` with fresh variables
+  let oldVars = C.varsInFun f
+  varMap <- fmap M.fromList . forM (S.toList oldVars) $ \v -> do
+    local <- freshVar
+    return (v, local)
+  let f' = C.replaceFunVars varMap f
+--   -- Evaluate the argument patterns
+--   args <- mapM eval xs
+  -- Match the formal parameters of the functions with the arguments
+  mapM_ (uncurry match) (zip (pfParams f') args)
+  -- Evaluate the body of the function and discard the local variables
+  eval (pfBody f') <|> do
+    forM_ (M.toList varMap) $ \(_, local) -> do
+      ditchVar local
+    empty
 
 
 --------------------------------------------------
