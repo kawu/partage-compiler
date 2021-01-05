@@ -6,7 +6,7 @@
 -- | Simple, non-efficient parsing with deduction rules
 
 
-module ParComp.SimpleParserBis
+module ParComp.SimpleParser
   ( chartParse
   ) where
 

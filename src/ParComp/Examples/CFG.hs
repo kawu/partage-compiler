@@ -13,31 +13,20 @@ module ParComp.Examples.CFG
   ) where
 
 
-import           Prelude hiding (splitAt, span)  -- , map, or, and, any, const, head)
+import           Prelude hiding (splitAt, span)
 
 import qualified Data.Text as T
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
-import           Data.String (fromString)
 
-import qualified ParComp.Patt.Core as C
 import           ParComp.Patt.Core
   (Item (..), Fun (..), FunName (..), Op (..))
 
 import           ParComp.Patt
 import qualified ParComp.Patt.Item as I
-import qualified ParComp.Patt.Typed as Ty
 import           ParComp.Patt.RuleBis (Rule (..))
 
--- import           ParComp.Pattern.Untyped (Fun(..))
--- import           ParComp.Pattern.Typed
---   ( Pattern(..), Patt(..), Rule(..)
---   , pair, nothing, just, nil, cons, left, right, bimap
---   )
--- import qualified ParComp.Pattern.Util as Util
-
--- import qualified ParComp.Parser as P
-import qualified ParComp.SimpleParserBis as SP
+import qualified ParComp.SimpleParser as SP
 
 
 -------------------------------------------------------------------------------
@@ -120,11 +109,6 @@ pos :: Int -> Ty Patt Int
 pos = encode P
 
 
--- | Dotted rule's head
-head :: Node -> Ty Patt Head
-head = encode P
-
-
 -- | Dot in a dotted rule
 dot :: Ty Patt (Maybe Node)
 dot = nothing
@@ -162,11 +146,6 @@ label =
   where
     extract (I.unEither -> Left (I.unPair -> (x, _))) = x
     extract (I.unEither -> Right x) = x
--- label =
---   fun (Fun "label" nodeLabel)
---   where
---     nodeLabel (Left (nonTerm, _nodeId)) = [nonTerm]
---     nodeLabel (Right term) = [term]
 
 
 -------------------------------------------------------------------------------
@@ -199,56 +178,25 @@ complete =
     v_j = var "j"         :: Ty Patt Int
     v_k = var "k"         :: Ty Patt Int
 
-    leftP = item (rule v_A v_As) (span v_i v_j) `seqp`
-            assign
-              (pair v_alpha (dot .: just v_B .: v_beta))
-              (splitAtDot v_As)
-
---     -- First antecendent
---     leftP = item
---       (rule v_A
---         (via splitAtDot
---           (pair v_alpha (dot .: just v_B .: v_beta))
---         )
---       )
---       (span v_i v_j)
+    -- First antecendent
+    leftP =
+      item (rule v_A v_As) (span v_i v_j) `seqp`
+      assign
+        (pair v_alpha (dot .: just v_B .: v_beta))
+        (splitAtDot v_As)
 
     -- Second antecendent
     rightP = item
       (rule v_C (suffix (dot .: nil)))
       (span v_j v_k)
 
---     -- Second antecendent
---     rightP = item
---       (rule v_C (suffix (dot .: nil)))
---       (span v_j v_k)
-
     -- Side condition
-    -- TODO: not safe!
     condP = eq (label v_B) (label v_C)
-
---     -- Side condition
---     condP = eq
---       (map label v_B)
---       (map label v_C)
 
     -- Consequent
     downP = item
-      (rule v_A
-        (append
-          v_alpha
-          (just v_B .: dot .: v_beta)
-        )
-      )
+      (rule v_A (v_alpha `append` (just v_B .: dot .: v_beta)))
       (span v_i v_k)
---     downP = item
---       (rule v_A
---         (bimap Util.append
---           v_alpha
---           (just v_B .: dot .: v_beta)
---         )
---       )
---       (span v_i v_k)
 
 
 
@@ -257,13 +205,6 @@ predict :: Rule
 predict =
   Rule [unTy leftP, unTy rightP] (unTy downP) condP
   where
---     -- TODO: This does not work due to the `suffix`, which should not
---     -- take a matching pattern as its first argument!
---     leftP = item
---       (rule anyp
---         (suffix $ dot .: just (var "B") .: anyp)
---       )
---       (span (var "i") (var "j"))
     leftP = item
       (rule anyp (var "body"))
       (span (var "i") (var "j"))
@@ -398,7 +339,6 @@ splitAt =
       let (ls, rs) = go at xs
        in I.pair ls rs
 
-    go :: Ty Item a -> Ty Item [a] -> (Ty Item [a], Ty Item [a])
     go at list = I.listI
       (I.nil, I.nil)
       (\x xs ->
@@ -414,9 +354,6 @@ splitAt =
 append :: Ty Patt [a] -> Ty Patt [a] -> Ty Patt [a]
 append =
   foreignFun2 "append" I.append
---   O . Apply app $ pair p q
---   where
---     app = Fun "append" $ I.pair' (\xs ys -> [I.append xs ys])
 
 
 -- | Check if the list contains a given suffix.
