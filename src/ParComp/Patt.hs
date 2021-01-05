@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -5,6 +6,8 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 
 -- | Top-level pattern matching module
@@ -48,12 +51,9 @@ module ParComp.Patt
 
   -- * Functions
   -- ** Native
-  , with1arg
-  , with2arg
-  , apply1
-  , apply2
-  , compile1
-  , compile2
+  , Args (..)
+  , Apply (..)
+  , Compile (..)
   -- ** Foreign
   , foreign1arg
   , foreign2arg
@@ -77,7 +77,6 @@ import qualified ParComp.Match as X
 -- Import non-qualified for re-export, qualified for local use
 import           ParComp.Patt.Typed (Ty (..))
 import qualified ParComp.Patt.Typed as Ty
-import qualified ParComp.Patt.Item as I
 import           ParComp.Patt.Item (IsItem (..))
 
 
@@ -183,35 +182,46 @@ cons = Ty.cons P
 --------------------------------------------------
 
 
--- | Make a typed pattern-level function from a given pattern-to-pattern
--- function.
-with1arg :: (Ty Patt a -> Ty Patt b) -> Ty PattFun (a -> b)
-with1arg f =
-  -- TODO: Make sure function `f` does not already contain variable "arg@1"!
-  Ty $ PattFun [unTy arg1] (unTy $ f arg1)
-  where
-    arg1 = var "arg@1"
+-- | Type class to represent variadic pattern-level functions.
+class Args a f where
+  -- | Instantiate @a@ with as many arguments as needed to produce a function.
+  withArgs :: a -> Ty PattFun f
+
+instance f ~ a => Args (Ty Patt a) f where
+  withArgs = Ty . PattFun [] . unTy
+
+instance (f ~ (a -> b)) => Args (Ty Patt a -> Ty Patt b) f where
+  withArgs f =
+    -- TODO: Make sure function `f` does not already contain variable "arg@1"!
+    Ty $ PattFun [unTy arg1] (unTy $ f arg1)
+    where
+      arg1 = var "arg@1"
+
+instance (f ~ (a -> b -> c)) => Args
+    (Ty Patt a -> Ty Patt b -> Ty Patt c)
+    f
+    where
+  withArgs f =
+    -- TODO: Make sure function `f` does not already contain variable "arg@1"!
+    Ty $ PattFun [unTy arg1, unTy arg2] (unTy $ f arg1 arg2)
+    where
+      arg1 = var "arg@1"
+      arg2 = var "arg@2"
 
 
--- | Make a typed pattern-level function from a given pattern-to-pattern
--- function.
-with2arg :: (Ty Patt a -> Ty Patt b -> Ty Patt c) -> Ty PattFun (a -> b -> c)
-with2arg f =
-  -- TODO: Make sure function `f` does not already contain variable "arg@1"!
-  Ty $ PattFun [unTy arg1, unTy arg2] (unTy $ f arg1 arg2)
-  where
-    arg1 = var "arg@1"
-    arg2 = var "arg@2"
+-- | Type class to represent application of variadic pattern-level functions.
+class Apply f a where
+  -- | Match @b@ with as many arguments as needed to apply a function.
+  apply :: Ty PattFun f -> a
 
+instance (f ~ (a -> b)) => Apply f (Ty Patt a -> Ty Patt b) where
+  apply (Ty f) (Ty x) = Ty . O $ ApplyP f [x]
 
--- | Apply 1-argument pattern-level function to a pattern.
-apply1 :: Ty PattFun (a -> b) -> Ty Patt a -> Ty Patt b
-apply1 (Ty f) (Ty x) = Ty . O $ ApplyP f [x]
-
-
--- | Apply 1-argument pattern-level function to a pattern.
-apply2 :: Ty PattFun (a -> b -> c) -> Ty Patt a -> Ty Patt b -> Ty Patt c
-apply2 (Ty f) (Ty x) (Ty y) = Ty . O $ ApplyP f [x, y]
+instance (f ~ (a -> b -> c)) => Apply
+    f
+    (Ty Patt a -> Ty Patt b -> Ty Patt c)
+    where
+  apply (Ty f) (Ty x) (Ty y) = Ty . O $ ApplyP f [x, y]
 
 
 --------------------------------------------------
@@ -242,29 +252,53 @@ compileUn f xs =
         X.lift $ P.yield x
 
 
--- | Compile a 1-argument pattern-level function of type (a -> b) to an actual,
--- non-deterministic (a -> [b]) function.
-compile1 :: (IsItem a, IsItem b) => Ty PattFun (a -> b) -> a -> [b]
-compile1 (Ty f) x =
-  -- TODO: Won't need unsafePerformIO once the P.MonadIO constraint is ditched.
-  unsafePerformIO $ do
-    map (decode . Ty) <$> compileUn f [arg x]
-  where
-    arg = unTy . encode I
+-- | Type class to represent compilation of variadic pattern-level functions.
+class Compile f g where
+  -- | Compile pattern-level function of type @f@ to a function of type @g@.
+  compile :: Ty PattFun f -> g
+
+instance {-# OVERLAPS #-} (IsItem a, IsItem b, g ~ (a -> [b]))
+    => Compile (a -> b) g where
+  compile (Ty f) x =
+    -- TODO: Won't need unsafePerformIO once the P.MonadIO constraint is ditched.
+    unsafePerformIO $ do
+      map (decode . Ty) <$> compileUn f [arg x]
+    where
+      arg = unTy . encode I
+
+instance (IsItem a, IsItem b, IsItem c, g ~ (a -> b -> [c]))
+    => Compile (a -> b -> c) g where
+  compile (Ty f) x y =
+    -- TODO: Won't need unsafePerformIO once the P.MonadIO constraint is ditched.
+    unsafePerformIO $ do
+      map (decode . Ty) <$> compileUn f [arg x, arg y]
+    where
+      arg = unTy . encode I
 
 
--- | Compile a 2-argument pattern-level function of type (a -> b -> c) to an
--- actual, non-deterministic (a -> b -> [c]) function.
-compile2
-  :: (IsItem a, IsItem b, IsItem c)
-  => Ty PattFun (a -> b -> c)
-  -> a -> b -> [c]
-compile2 (Ty f) x y =
-  -- TODO: Won't need unsafePerformIO once the P.MonadIO constraint is ditched.
-  unsafePerformIO $ do
-    map (decode . Ty) <$> compileUn f [arg x, arg y]
-  where
-    arg = unTy . encode I
+-- -- | Compile a 1-argument pattern-level function of type (a -> b) to an actual,
+-- -- non-deterministic (a -> [b]) function.
+-- compile1 :: (IsItem a, IsItem b) => Ty PattFun (a -> b) -> a -> [b]
+-- compile1 (Ty f) x =
+--   -- TODO: Won't need unsafePerformIO once the P.MonadIO constraint is ditched.
+--   unsafePerformIO $ do
+--     map (decode . Ty) <$> compileUn f [arg x]
+--   where
+--     arg = unTy . encode I
+--
+--
+-- -- | Compile a 2-argument pattern-level function of type (a -> b -> c) to an
+-- -- actual, non-deterministic (a -> b -> [c]) function.
+-- compile2
+--   :: (IsItem a, IsItem b, IsItem c)
+--   => Ty PattFun (a -> b -> c)
+--   -> a -> b -> [c]
+-- compile2 (Ty f) x y =
+--   -- TODO: Won't need unsafePerformIO once the P.MonadIO constraint is ditched.
+--   unsafePerformIO $ do
+--     map (decode . Ty) <$> compileUn f [arg x, arg y]
+--   where
+--     arg = unTy . encode I
 
 
 --------------------------------------------------
