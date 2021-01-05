@@ -36,7 +36,7 @@ import qualified Data.Primitive.Array as A
 
 import qualified ParComp.Patt.Core as C
 import           ParComp.Patt.Core
-  ( Term (..), Item (..), Var (..), Fun (..), PattFun(..)
+  ( Term (..), Item (..), Var (..), ForeignFun (..), PattFun(..)
   , Op (..), Cond (..), Patt (..)
   )
 import           ParComp.Patt.Typed (Ty (..))

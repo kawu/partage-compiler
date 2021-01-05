@@ -46,13 +46,17 @@ module ParComp.Patt
   , check
   , eq
 
-  -- * Pattern functions
+  -- * Functions
+  -- ** Native
   , with1arg
   , with2arg
   , apply1
   , apply2
   , compile1
   , compile2
+  -- ** Foreign
+  , foreign1arg
+  , foreign2arg
 
   -- * Item encoding
   , IsItem (..)
@@ -73,6 +77,7 @@ import qualified ParComp.Match as X
 -- Import non-qualified for re-export, qualified for local use
 import           ParComp.Patt.Typed (Ty (..))
 import qualified ParComp.Patt.Typed as Ty
+import qualified ParComp.Patt.Item as I
 import           ParComp.Patt.Item (IsItem (..))
 
 
@@ -260,3 +265,25 @@ compile2 (Ty f) x y =
     map (decode . Ty) <$> compileUn f [arg x, arg y]
   where
     arg = unTy . encode I
+
+
+--------------------------------------------------
+-- Foreign functions
+--------------------------------------------------
+
+
+-- | Declare a named foreign function and lift it to a pattern-level function
+foreign1arg :: FunName -> (Ty Item a -> Ty Item b) -> Ty Patt a -> Ty Patt b
+foreign1arg funName f =
+  let named = ForeignFun funName $ \x -> [unTy $ f $ Ty x]
+   in Ty . O . Apply named . unTy
+
+
+-- | 2-argument variant of `foreign1arg`
+foreign2arg
+  :: FunName
+  -> (Ty Item a -> Ty Item b -> Ty Item c)
+  -> Ty Patt a -> Ty Patt b -> Ty Patt c
+foreign2arg funName f =
+  let named = ForeignFun funName $ \x -> [unTy $ I.pairI f $ Ty x]
+   in \x y -> Ty . O . Apply named . unTy $ pair x y

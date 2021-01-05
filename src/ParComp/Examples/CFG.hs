@@ -19,8 +19,7 @@ import qualified Data.Text as T
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 
-import           ParComp.Patt.Core
-  (Item (..), Fun (..), FunName (..), Op (..))
+import           ParComp.Patt.Core (Item (..))
 
 import           ParComp.Patt
 import qualified ParComp.Patt.Item as I
@@ -119,30 +118,10 @@ dot = nothing
 -------------------------------------------------------------------------------
 
 
--- TODO: Move `foreignFun` etc. to a different module
-
-
--- | Name a function and lift it to a pattern-level function
-foreignFun :: FunName -> (Ty Item a -> Ty Item b) -> Ty Patt a -> Ty Patt b
-foreignFun funName f =
-  let named = Fun funName $ \x -> [unTy $ f $ Ty x]
-   in Ty . O . Apply named . unTy
-
-
--- | 2-argument variant of `name`
-foreignFun2
-  :: FunName
-  -> (Ty Item a -> Ty Item b -> Ty Item c)
-  -> Ty Patt a -> Ty Patt b -> Ty Patt c
-foreignFun2 funName f =
-  let named = Fun funName $ \x -> [unTy $ I.pairI f $ Ty x]
-   in \x y -> Ty . O . Apply named . unTy $ pair x y
-
-
 -- | Pattern to extract the non-terminal / terminal symbol of a node
 label :: Ty Patt Node -> Ty Patt Sym
 label =
-  foreignFun "label" extract
+  foreign1arg "label" extract
   where
     extract (I.unEither -> Left (I.unPair -> (x, _))) = x
     extract (I.unEither -> Right x) = x
@@ -310,7 +289,7 @@ testCFG = do
 
 
 --------------------------------------------------
--- Utility patterns
+-- Utility patterns and functions
 --------------------------------------------------
 
 
@@ -330,7 +309,7 @@ splitAtDot =
 splitAt :: Ty Patt a -> Ty Patt [a] -> Ty Patt ([a], [a])
 splitAt =
 
-  foreignFun2 "splitAt" doit
+  foreign2arg "splitAt" doit
 
   where
 
@@ -353,7 +332,7 @@ splitAt =
 -- | Append two lists
 append :: Ty Patt [a] -> Ty Patt [a] -> Ty Patt [a]
 append =
-  foreignFun2 "append" I.append
+  foreign2arg "append" I.append
 
 
 -- | Check if the list contains a given suffix.
@@ -365,4 +344,4 @@ suffix p =
   where
     xs = var "xs"
     cond = eq (hasSuffix p xs) true
-    hasSuffix = foreignFun2 "suffix" I.suffix
+    hasSuffix = foreign2arg "suffix" I.suffix

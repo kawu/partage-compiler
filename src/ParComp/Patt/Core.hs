@@ -15,7 +15,7 @@ module ParComp.Patt.Core
 
   -- * Functions
   , FunName (..)
-  , Fun (..)
+  , ForeignFun (..)
   , PattFun (..)
   , varsIn
   , varsInFun
@@ -63,7 +63,7 @@ newtype Item = I {unI :: Term Item}
 
 
 --------------------------------------------------
--- Host/foreign functions
+-- Foreign function
 --------------------------------------------------
 
 
@@ -75,20 +75,20 @@ instance Show FunName where
   show = T.unpack . unFunName
 
 -- | Named host/foreign function
-data Fun = Fun
+data ForeignFun = ForeignFun
   { fname :: FunName
     -- ^ The function's name
   , fbody :: Item -> [Item]
     -- ^ The function itself (non-deterministic)
   }
 
-instance Show Fun where
-  show Fun{..} = show fname
+instance Show ForeignFun where
+  show ForeignFun{..} = show fname
 
-instance Eq Fun where
+instance Eq ForeignFun where
   x == y = fname x == fname y
 
-instance Ord Fun where
+instance Ord ForeignFun where
   x `compare` y = fname x `compare` fname y
 
 
@@ -220,7 +220,7 @@ data Op e where
   Choice  :: e -> e -> Op e
 
   -- | Apply (foreign?) function to a pattern
-  Apply   :: Fun -> e -> Op e
+  Apply   :: ForeignFun -> e -> Op e
   -- | Apply (native?) function to a list of arguments
   ApplyP   :: PattFun -> [e] -> Op e
   -- | Pattern assignment
