@@ -4,7 +4,7 @@
 -- | Deduction rule
 
 
-module ParComp.Pattern.RuleBis
+module ParComp.Patt.RuleBis
   ( Rule (..)
   , apply
   ) where

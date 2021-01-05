@@ -21,10 +21,8 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 
 import qualified ParComp.Patt.Core as C
+import qualified ParComp.Patt.RuleBis as R
 import qualified ParComp.Match as Match
--- import qualified ParComp.Pattern.Typed as Ty
--- import           ParComp.Pattern.Typed (Pattern(..), Patt(..))
-import qualified ParComp.Pattern.RuleBis as R
 
 
 -- | State of the parser

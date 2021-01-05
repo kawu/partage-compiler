@@ -1,5 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ViewPatterns #-}
+-- {-# LANGUAGE ScopedTypeVariables #-}
 
 
 -- | Context-free grammar parsing
@@ -11,22 +13,31 @@ module ParComp.Examples.CFG
   ) where
 
 
-import           Prelude hiding
-  (splitAt, span, map, or, and, any, const, head)
+import           Prelude hiding (splitAt, span)  -- , map, or, and, any, const, head)
 
 import qualified Data.Text as T
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
+import           Data.String (fromString)
 
-import           ParComp.Pattern.Untyped (Fun(..))
-import           ParComp.Pattern.Typed
-  ( Pattern(..), Patt(..), Rule(..)
-  , pair, nothing, just, nil, cons, left, right, bimap
-  )
-import qualified ParComp.Pattern.Util as Util
+import qualified ParComp.Patt.Core as C
+import           ParComp.Patt.Core
+  (Item (..), Fun (..), FunName (..), Op (..))
 
-import qualified ParComp.Parser as P
-import qualified ParComp.SimpleParser as SP
+import           ParComp.Patt
+import qualified ParComp.Patt.Item as I
+import qualified ParComp.Patt.Typed as Ty
+import           ParComp.Patt.RuleBis (Rule (..))
+
+-- import           ParComp.Pattern.Untyped (Fun(..))
+-- import           ParComp.Pattern.Typed
+--   ( Pattern(..), Patt(..), Rule(..)
+--   , pair, nothing, just, nil, cons, left, right, bimap
+--   )
+-- import qualified ParComp.Pattern.Util as Util
+
+-- import qualified ParComp.Parser as P
+import qualified ParComp.SimpleParserBis as SP
 
 
 -------------------------------------------------------------------------------
@@ -72,7 +83,7 @@ type Active = (DotRule, Span)
 -- | Top-level item: either an actual active item or a grammar dotted rule.
 -- Top-level rules are later used in the prediction deduction rule (because we
 -- can).
-type Item = Either Active DotRule
+type TopItem = Either Active DotRule
 
 
 -------------------------------------------------------------------------------
@@ -85,37 +96,37 @@ type Item = Either Active DotRule
 
 
 -- | Top-level active item pattern
-item :: Patt repr => repr DotRule -> repr Span -> repr Item
+item :: Ty Patt DotRule -> Ty Patt Span -> Ty Patt TopItem
 item r s = left $ pair r s
 
 
 -- | Dotted rule as a top-level item
-top :: Patt repr => repr DotRule -> repr Item
+top :: Ty Patt DotRule -> Ty Patt TopItem
 top = right
 
 
 -- | Dotted rule
-rule :: Patt repr => repr Head -> repr Body -> repr DotRule
+rule :: Ty Patt Head -> Ty Patt Body -> Ty Patt DotRule
 rule = pair
 
 
 -- | Item's span
-span :: Patt repr => repr Int -> repr Int -> repr Span
+span :: Ty Patt Int -> Ty Patt Int -> Ty Patt Span
 span = pair
 
 
 -- | Position in a sentence
-pos :: Patt repr => Int -> repr Int
-pos = const
+pos :: Int -> Ty Patt Int
+pos = encode P
 
 
 -- | Dotted rule's head
-head :: Patt repr => Node -> repr Head
-head = const
+head :: Node -> Ty Patt Head
+head = encode P
 
 
 -- | Dot in a dotted rule
-dot :: Patt repr => repr (Maybe Node)
+dot :: Ty Patt (Maybe Node)
 dot = nothing
 
 
@@ -124,13 +135,38 @@ dot = nothing
 -------------------------------------------------------------------------------
 
 
+-- TODO: Move `foreignFun` etc. to a different module
+
+
+-- | Name a function and lift it to a pattern-level function
+foreignFun :: FunName -> (Ty Item a -> Ty Item b) -> Ty Patt a -> Ty Patt b
+foreignFun funName f =
+  let named = Fun funName $ \x -> [unTy $ f $ Ty x]
+   in Ty . O . Apply named . unTy
+
+
+-- | 2-argument variant of `name`
+foreignFun2
+  :: FunName
+  -> (Ty Item a -> Ty Item b -> Ty Item c)
+  -> Ty Patt a -> Ty Patt b -> Ty Patt c
+foreignFun2 funName f =
+  let named = Fun funName $ \x -> [unTy $ I.pairI f $ Ty x]
+   in \x y -> Ty . O . Apply named . unTy $ pair x y
+
+
 -- | Pattern to extract the non-terminal / terminal symbol of a node
-label :: Patt repr => repr (Node -> Sym)
+label :: Ty Patt Node -> Ty Patt Sym
 label =
-  fun (Fun "label" nodeLabel)
+  foreignFun "label" extract
   where
-    nodeLabel (Left (nonTerm, _nodeId)) = [nonTerm]
-    nodeLabel (Right term) = [term]
+    extract (I.unEither -> Left (I.unPair -> (x, _))) = x
+    extract (I.unEither -> Right x) = x
+-- label =
+--   fun (Fun "label" nodeLabel)
+--   where
+--     nodeLabel (Left (nonTerm, _nodeId)) = [nonTerm]
+--     nodeLabel (Right term) = [term]
 
 
 -------------------------------------------------------------------------------
@@ -139,12 +175,12 @@ label =
 
 
 -- | CFG complete rule
-complete :: Rule Item
+complete :: Rule
 complete =
 
   Rule
-  { antecedents  = [leftP, rightP]
-  , consequent = downP
+  { antecedents  = [unTy leftP, unTy rightP]
+  , consequent = unTy downP
   , condition = condP
   }
 
@@ -153,68 +189,100 @@ complete =
     -- Variables (declaring them with type annotations provides additional type
     -- safety, but is not obligatory; see the prediction rule below, where type
     -- annotations are not used, for comparison)
-    v_A = var "A"         :: Pattern Node
-    v_B = var "B"         :: Pattern Node
-    v_C = var "C"         :: Pattern Node
-    v_alpha = var "alpha" :: Pattern Body
-    v_beta = var "beta"   :: Pattern Body
-    v_i = var "i"         :: Pattern Int
-    v_j = var "j"         :: Pattern Int
-    v_k = var "k"         :: Pattern Int
+    v_A = var "A"         :: Ty Patt Node
+    v_As = var "As"       :: Ty Patt Body
+    v_B = var "B"         :: Ty Patt Node
+    v_C = var "C"         :: Ty Patt Node
+    v_alpha = var "alpha" :: Ty Patt Body
+    v_beta = var "beta"   :: Ty Patt Body
+    v_i = var "i"         :: Ty Patt Int
+    v_j = var "j"         :: Ty Patt Int
+    v_k = var "k"         :: Ty Patt Int
 
-    -- First antecendent
-    leftP = item
-      (rule v_A
-        (via splitAtDot
-          (pair v_alpha (dot .: just v_B .: v_beta))
-        )
-      )
-      (span v_i v_j)
+    leftP = item (rule v_A v_As) (span v_i v_j) `seqp`
+            assign
+              (pair v_alpha (dot .: just v_B .: v_beta))
+              (splitAtDot v_As)
+
+--     -- First antecendent
+--     leftP = item
+--       (rule v_A
+--         (via splitAtDot
+--           (pair v_alpha (dot .: just v_B .: v_beta))
+--         )
+--       )
+--       (span v_i v_j)
 
     -- Second antecendent
     rightP = item
       (rule v_C (suffix (dot .: nil)))
       (span v_j v_k)
 
+--     -- Second antecendent
+--     rightP = item
+--       (rule v_C (suffix (dot .: nil)))
+--       (span v_j v_k)
+
     -- Side condition
-    condP = eq
-      (map label v_B)
-      (map label v_C)
+    -- TODO: not safe!
+    condP = eq (label v_B) (label v_C)
+
+--     -- Side condition
+--     condP = eq
+--       (map label v_B)
+--       (map label v_C)
 
     -- Consequent
     downP = item
       (rule v_A
-        (bimap Util.append
+        (append
           v_alpha
           (just v_B .: dot .: v_beta)
         )
       )
       (span v_i v_k)
+--     downP = item
+--       (rule v_A
+--         (bimap Util.append
+--           v_alpha
+--           (just v_B .: dot .: v_beta)
+--         )
+--       )
+--       (span v_i v_k)
 
 
 
 -- | CFG predict rule
-predict :: Rule Item
+predict :: Rule
 predict =
-  Rule [leftP, rightP] downP condP
+  Rule [unTy leftP, unTy rightP] (unTy downP) condP
   where
+--     -- TODO: This does not work due to the `suffix`, which should not
+--     -- take a matching pattern as its first argument!
+--     leftP = item
+--       (rule anyp
+--         (suffix $ dot .: just (var "B") .: anyp)
+--       )
+--       (span (var "i") (var "j"))
     leftP = item
-      (rule any
-        (suffix $ dot .: just (var "B") .: any)
-      )
+      (rule anyp (var "body"))
       (span (var "i") (var "j"))
+      `seqp`
+      assign
+        (pair anyp (dot .: just (var "B") .: anyp))
+        (splitAtDot (var "body"))
     rightP = top $
       rule (var "C") (var "alpha")
     condP = eq
-      (map label (var "B"))
-      (map label (var "C"))
+      (label (var "B"))
+      (label (var "C"))
     downP = item
       (rule (var "C") (var "alpha"))
       (span (var "j") (var "j"))
 
 
 -------------------------------------------------------------------------------
--- Axioms 
+-- Axioms
 -------------------------------------------------------------------------------
 
 
@@ -222,7 +290,7 @@ predict =
 cfgBaseItems
   :: [T.Text]                   -- ^ Input sentence
   -> S.Set (Node, [Node])       -- ^ CFG rules: set of (head, body) pairs
-  -> [Item]
+  -> [TopItem]
 cfgBaseItems inp cfgRules =
   base1 ++ base2 ++ baseRules
   where
@@ -240,7 +308,7 @@ cfgBaseItems inp cfgRules =
 
 
 -------------------------------------------------------------------------------
--- Main 
+-- Main
 -------------------------------------------------------------------------------
 
 
@@ -279,27 +347,25 @@ testSent = ["a", "man", "quickly", "eats", "some", "pizza"]
 
 
 -- | Run the parser on the test grammar and sentence.
-runCFG :: Bool -> IO (Maybe Item)
-runCFG simpleParser = do
-  let baseItems = cfgBaseItems testSent testRules
+runCFG :: IO (Maybe Item)
+runCFG = do
+  let baseItems = map (unTy . encode I) $ cfgBaseItems testSent testRules
       ruleMap = M.fromList
         [ ("CO", complete)
         , ("PR", predict)
         ]
       zero = pos 0
       slen = pos (length testSent)
-      finalPatt = item any (span zero slen)
-  if simpleParser
-     then SP.chartParse baseItems ruleMap finalPatt
-     else P.chartParse  baseItems ruleMap finalPatt
+      finalPatt = unTy $ item anyp (span zero slen)
+  SP.chartParse baseItems ruleMap finalPatt
 
 
 -- | Run the parser on the test grammar and sentence.
 testCFG :: IO ()
 testCFG = do
-  runCFG False >>= \case
+  runCFG >>= \case
     Nothing -> putStrLn "# No parse found"
-    Just it -> print it
+    Just it -> print $ (decode (Ty it) :: TopItem)
 
 
 --------------------------------------------------
@@ -308,25 +374,58 @@ testCFG = do
 
 
 -- | Operator synonym to `cons`
-(.:) :: (Patt repr) => repr a -> repr [a] -> repr [a]
+-- (.:) :: (Patt repr) => repr a -> repr [a] -> repr [a]
+(.:) :: Ty Patt a -> Ty Patt [a] -> Ty Patt [a]
 (.:) = cons
 infixr 5 .:
 
 
--- | Split a rule's body at the dot.
-splitAtDot :: Patt repr => repr (Body -> (Body, Body))
+splitAtDot :: Ty Patt Body -> Ty Patt (Body, Body)
 splitAtDot =
-  fun (Fun "splitAtDot" ((:[]) . go))
+  splitAt dot
+
+
+-- | Split a list at a given element
+splitAt :: Ty Patt a -> Ty Patt [a] -> Ty Patt ([a], [a])
+splitAt =
+
+  foreignFun2 "splitAt" doit
+
   where
-    go list@(x:xs)
-      -- dot is represented by Nothing
-      | x == Nothing = ([], list)
-      | otherwise =
-          let (pref, suff) = go xs
-           in (x:pref, suff)
-    go [] = ([], [])
+
+    doit :: Ty Item a -> Ty Item [a] -> Ty Item ([a], [a])
+    doit at xs =
+      let (ls, rs) = go at xs
+       in I.pair ls rs
+
+    go :: Ty Item a -> Ty Item [a] -> (Ty Item [a], Ty Item [a])
+    go at list = I.listI
+      (I.nil, I.nil)
+      (\x xs ->
+         if x == at
+         then (I.nil, list)
+         else
+           let (pref, suff) = go at xs
+            in (I.cons x pref, suff)
+      ) list
 
 
--- | Match any suffix that satisfies the given suffix pattern.
-suffix :: (Patt repr) => repr [a] -> repr [a]
-suffix p = fix $ choice p (any .: rec)
+-- | Append two lists
+append :: Ty Patt [a] -> Ty Patt [a] -> Ty Patt [a]
+append =
+  foreignFun2 "append" I.append
+--   O . Apply app $ pair p q
+--   where
+--     app = Fun "append" $ I.pair' (\xs ys -> [I.append xs ys])
+
+
+-- | Check if the list contains a given suffix.
+-- TODO: This is somewhat ugly, also the argument pattern cannot contain free
+-- variables...
+suffix :: Ty Patt [a] -> Ty Patt [a]
+suffix p =
+  xs `seqp` check cond `seqp` xs
+  where
+    xs = var "xs"
+    cond = eq (hasSuffix p xs) true
+    hasSuffix = foreignFun2 "suffix" I.suffix
