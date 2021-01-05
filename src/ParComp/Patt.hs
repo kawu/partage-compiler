@@ -16,8 +16,10 @@ module ParComp.Patt
     Patt (..)
   , PattFun (..)
 
-  -- * Patterns for basic types
+  -- * Type constructor
   , Ty (..)
+
+  -- * Patterns for basic types
   -- ** Unit
   , unit
   -- ** Boolean
