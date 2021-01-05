@@ -52,6 +52,8 @@ module ParComp.Patt
   -- * Functions
   -- ** Native
   , Args (..)
+  , Vars ()
+  , withVars
   , Apply (..)
   , Compile (..)
   -- ** Foreign
@@ -180,6 +182,24 @@ cons = Ty.cons P
 --------------------------------------------------
 -- Native functions
 --------------------------------------------------
+
+
+-- | Type class to introduce free variables.
+class Vars f a where
+  -- | Generate free variables to produce a function.  The first argument
+  -- represents the variable ID.
+  genVars :: Int -> f -> Ty Patt a
+
+instance (a ~ a') => Vars (Ty Patt a) a' where
+  genVars _ = id
+
+instance Vars f b => Vars (Ty Patt a -> f) b where
+  genVars k f = genVars (k+1) $ f (var $ "var@" ++ show k)
+
+
+-- | Generate free variables to produce a function.
+withVars :: Vars f a => f -> Ty Patt a
+withVars = genVars 1
 
 
 -- | Type class to represent variadic pattern-level functions.

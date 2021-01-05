@@ -178,27 +178,40 @@ complete =
       (span v_i v_k)
 
 
+-- -- | CFG predict rule
+-- predict :: PattFun
+-- predict =
+--   PattFun [unTy leftP, unTy rightP] (unTy downP)
+--   where
+--     leftP = item
+--       (rule anyp (var "body"))
+--       (span (var "i") (var "j"))
+--       `seqp`
+--       assign
+--         (pair anyp (dot .: just (var "B") .: anyp))
+--         (splitAtDot (var "body"))
+--     rightP = top (rule (var "C") (var "alpha"))
+--       `seqp` check condP
+--     condP = eq
+--       (label (var "B"))
+--       (label (var "C"))
+--     downP = item
+--       (rule (var "C") (var "alpha"))
+--       (span (var "j") (var "j"))
+
 
 -- | CFG predict rule
-predict :: PattFun
+predict :: Ty PattFun (TopItem -> TopItem -> TopItem)
 predict =
-  PattFun [unTy leftP, unTy rightP] (unTy downP)
-  where
-    leftP = item
-      (rule anyp (var "body"))
-      (span (var "i") (var "j"))
-      `seqp`
+  withArgs $ \leftArg rightArg ->
+    withVars $ \vbody vi vj vB vC valpha ->
+      assign (item (rule anyp vbody) (span vi vj)) leftArg `seqp`
       assign
-        (pair anyp (dot .: just (var "B") .: anyp))
-        (splitAtDot (var "body"))
-    rightP = top (rule (var "C") (var "alpha"))
-      `seqp` check condP
-    condP = eq
-      (label (var "B"))
-      (label (var "C"))
-    downP = item
-      (rule (var "C") (var "alpha"))
-      (span (var "j") (var "j"))
+        (pair anyp (dot .: just vB .: anyp))
+        (splitAtDot vbody) `seqp`
+      assign (top (rule vC valpha)) rightArg  `seqp`
+      check (label vB `eq` label vC) `seqp`
+      item (rule vC valpha) (span vj vj)
 
 
 -------------------------------------------------------------------------------
@@ -272,7 +285,7 @@ runCFG = do
   let baseItems = map (unTy . encode I) $ cfgBaseItems testSent testRules
       ruleMap = M.fromList
         [ ("CO", complete)
-        , ("PR", predict)
+        , ("PR", unTy predict)
         ]
       zero = pos 0
       slen = pos (length testSent)
