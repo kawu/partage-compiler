@@ -16,10 +16,26 @@ module ParComp.Patt
     Patt (..)
   , PattFun (..)
 
-  -- * Re-export the typed pattern-matching module
-  , module ParComp.Patt.Typed
+  -- * Patterns for basic types
+  , Ty (..)
+  -- ** Unit
+  , unit
+  -- ** Boolean
+  , true
+  , false
+  -- ** Tuples
+  , pair
+  -- ** Maybe
+  , nothing
+  , just
+  -- ** Either
+  , left
+  , right
+  -- ** List
+  , nil
+  , cons
 
-  -- * Smart constructors
+  -- * Smart pattern constructors
   , var
   , anyp
   , seqp
@@ -28,13 +44,16 @@ module ParComp.Patt
   , check
   , eq
 
-  -- * Functions
+  -- * Pattern functions
   , with1arg
   , with2arg
   , apply1
   , apply2
   , compile1
   , compile2
+
+  -- * Item encoding
+  , IsItem (..)
   ) where
 
 
@@ -50,7 +69,9 @@ import           ParComp.Patt.Core
 import qualified ParComp.Match as X
 
 -- Import non-qualified for re-export, qualified for local use
-import           ParComp.Patt.Typed
+import           ParComp.Patt.Typed (Ty (..))
+import qualified ParComp.Patt.Typed as Ty
+import           ParComp.Patt.Item (IsItem (..))
 
 
 --------------------------------------------------
@@ -96,11 +117,63 @@ eq (Ty p) (Ty q) = Eq p q
 
 
 --------------------------------------------------
--- Native functions
+-- Types
 --------------------------------------------------
 
 
--- TODO: Move with1arg etc. to Typed.hs?
+-- | Unit
+unit :: Ty Patt ()
+unit = Ty.unit P
+
+
+-- | True
+true :: Ty Patt Bool
+true = Ty.true P
+
+
+-- | False
+false :: Ty Patt Bool
+false = Ty.false P
+
+
+-- | Expression `pair x y` constructs a pair from `x` and `y`.
+pair :: Ty Patt a -> Ty Patt b -> Ty Patt (a, b)
+pair = Ty.pair P
+
+
+-- | `Nothing`
+nothing :: Ty Patt (Maybe a)
+nothing = Ty.nothing P
+
+
+-- | `Just`
+just :: Ty Patt a -> Ty Patt (Maybe a)
+just = Ty.just P
+
+
+-- | `Left`
+left :: Ty Patt a -> Ty Patt (Either a b)
+left = Ty.left P
+
+
+-- | `Right`
+right :: Ty Patt b -> Ty Patt (Either a b)
+right = Ty.right P
+
+
+-- | `[]`
+nil :: Ty Patt [a]
+nil = Ty.nil P
+
+
+-- | `x:xs`
+cons :: Ty Patt a -> Ty Patt [a] -> Ty Patt [a]
+cons = Ty.cons P
+
+
+--------------------------------------------------
+-- Native functions
+--------------------------------------------------
 
 
 -- | Make a typed pattern-level function from a given pattern-to-pattern

@@ -24,8 +24,9 @@ import qualified ParComp.Patt.Core as C
 import           ParComp.Patt.Core
   (Item (..), Fun (..), FunName (..), Op (..))
 
-import qualified ParComp.Patt as P
-import           ParComp.Patt hiding (append, suffix)
+import           ParComp.Patt
+import qualified ParComp.Patt.Item as I
+import qualified ParComp.Patt.Typed as Ty
 import           ParComp.Pattern.RuleBis (Rule (..))
 
 -- import           ParComp.Pattern.Untyped (Fun(..))
@@ -96,22 +97,22 @@ type TopItem = Either Active DotRule
 
 -- | Top-level active item pattern
 item :: Ty Patt DotRule -> Ty Patt Span -> Ty Patt TopItem
-item r s = left P $ pair P r s
+item r s = left $ pair r s
 
 
 -- | Dotted rule as a top-level item
 top :: Ty Patt DotRule -> Ty Patt TopItem
-top = right P
+top = right
 
 
 -- | Dotted rule
 rule :: Ty Patt Head -> Ty Patt Body -> Ty Patt DotRule
-rule = pair P
+rule = pair
 
 
 -- | Item's span
 span :: Ty Patt Int -> Ty Patt Int -> Ty Patt Span
-span = pair P
+span = pair
 
 
 -- | Position in a sentence
@@ -126,7 +127,7 @@ head = encode P
 
 -- | Dot in a dotted rule
 dot :: Ty Patt (Maybe Node)
-dot = nothing P
+dot = nothing
 
 
 -------------------------------------------------------------------------------
@@ -150,8 +151,8 @@ foreignFun2
   -> (Ty Item a -> Ty Item b -> Ty Item c)
   -> Ty Patt a -> Ty Patt b -> Ty Patt c
 foreignFun2 funName f =
-  let named = Fun funName $ \x -> [unTy $ pair' f $ Ty x]
-   in \x y -> Ty . O . Apply named . unTy $ pair P x y
+  let named = Fun funName $ \x -> [unTy $ I.pairI f $ Ty x]
+   in \x y -> Ty . O . Apply named . unTy $ pair x y
 
 
 -- | Pattern to extract the non-terminal / terminal symbol of a node
@@ -159,8 +160,8 @@ label :: Ty Patt Node -> Ty Patt Sym
 label =
   foreignFun "label" extract
   where
-    extract (unEither -> Left (unPair -> (x, _))) = x
-    extract (unEither -> Right x) = x
+    extract (I.unEither -> Left (I.unPair -> (x, _))) = x
+    extract (I.unEither -> Right x) = x
 -- label =
 --   fun (Fun "label" nodeLabel)
 --   where
@@ -200,7 +201,7 @@ complete =
 
     leftP = item (rule v_A v_As) (span v_i v_j) `seqp`
             assign
-              (pair P v_alpha (dot .: just P v_B .: v_beta))
+              (pair v_alpha (dot .: just v_B .: v_beta))
               (splitAtDot v_As)
 
 --     -- First antecendent
@@ -214,7 +215,7 @@ complete =
 
     -- Second antecendent
     rightP = item
-      (rule v_C (suffix (dot .: nil P)))
+      (rule v_C (suffix (dot .: nil)))
       (span v_j v_k)
 
 --     -- Second antecendent
@@ -236,7 +237,7 @@ complete =
       (rule v_A
         (append
           v_alpha
-          (just P v_B .: dot .: v_beta)
+          (just v_B .: dot .: v_beta)
         )
       )
       (span v_i v_k)
@@ -268,7 +269,7 @@ predict =
       (span (var "i") (var "j"))
       `seqp`
       assign
-        (pair P anyp (dot .: just P (var "B") .: anyp))
+        (pair anyp (dot .: just (var "B") .: anyp))
         (splitAtDot (var "body"))
     rightP = top $
       rule (var "C") (var "alpha")
@@ -375,7 +376,7 @@ testCFGBis = do
 -- | Operator synonym to `cons`
 -- (.:) :: (Patt repr) => repr a -> repr [a] -> repr [a]
 (.:) :: Ty Patt a -> Ty Patt [a] -> Ty Patt [a]
-(.:) = cons P
+(.:) = cons
 infixr 5 .:
 
 
@@ -395,23 +396,24 @@ splitAt =
     doit :: Ty Item a -> Ty Item [a] -> Ty Item ([a], [a])
     doit at xs =
       let (ls, rs) = go at xs
-       in pair I ls rs
+       in Ty.pair I ls rs
 
-    go at list = list'
-      (nil I, nil I)
+    go :: Ty Item a -> Ty Item [a] -> (Ty Item [a], Ty Item [a])
+    go at list = I.listI
+      (Ty.nil I, Ty.nil I)
       (\x xs ->
          if x == at
-         then (nil I, list)
+         then (Ty.nil I, list)
          else
            let (pref, suff) = go at xs
-            in (cons I x pref, suff)
+            in (Ty.cons I x pref, suff)
       ) list
 
 
 -- | Append two lists
 append :: Ty Patt [a] -> Ty Patt [a] -> Ty Patt [a]
 append =
-  foreignFun2 "append" P.append
+  foreignFun2 "append" I.append
 --   O . Apply app $ pair p q
 --   where
 --     app = Fun "append" $ I.pair' (\xs ys -> [I.append xs ys])
@@ -425,5 +427,5 @@ suffix p =
   xs `seqp` check cond `seqp` xs
   where
     xs = var "xs"
-    cond = eq (hasSuffix p xs) (true P)
-    hasSuffix = foreignFun2 "suffix" P.suffix
+    cond = eq (hasSuffix p xs) true
+    hasSuffix = foreignFun2 "suffix" I.suffix

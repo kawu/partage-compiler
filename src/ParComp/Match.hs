@@ -17,12 +17,6 @@ module ParComp.Match
   , match
   , eval
   , check
-
-  -- * Provisional
-  , fromItem
-  , runCompile
-  , runCompileTy
-  , runCompileTy2
   ) where
 
 
@@ -45,7 +39,7 @@ import           ParComp.Patt.Core
   ( Term (..), Item (..), Var (..), Fun (..), PattFun(..)
   , Op (..), Cond (..), Patt (..)
   )
-import           ParComp.Patt.Typed (Ty (..), IsItem (..))
+import           ParComp.Patt.Typed (Ty (..))
 
 
 --------------------------------------------------
@@ -392,125 +386,125 @@ eval (O p) =
 --------------------------------------------------
 
 
-fromItem_ :: Item -> Patt
-fromItem_ x =
-  case x of
-    I Unit -> P Unit
-    I (Sym x) -> P (Sym x)
-    I (Tag k p) -> P (Tag k (fromItem_ p))
-    I (Vec v) -> P (Vec $ fmap fromItem_ v)
-
-
-fromItem :: Ty Item a -> Ty Patt a
-fromItem = Ty . fromItem_ . unTy
-
-
-compile_ :: P.MonadIO m => (Patt -> Patt) -> Item -> MatchT m Item
-compile_ f x =
-  eval (f (fromItem_ x))
-
-
-compile :: P.MonadIO m => (Ty Patt a -> Ty Patt b) -> Ty Item a -> MatchT m (Ty Item b)
-compile f x =
-  Ty <$> eval (unTy $ f (fromItem x))
-
-
--- | Lower-level handler-based `doCompile`.
-_doCompile
-  :: (P.MonadIO m)
-  => (Patt -> Patt)
-  -> Item
-  -> (Item -> m ()) -- ^ Monadic handler
-  -> m ()
-_doCompile f x h = _toListT (compile_ f x) h
-
-
--- | Perform compilation and generate the list of possible global variable
--- binding environments which satisfy the match.
-doCompile :: (P.MonadIO m) => (Patt -> Patt) -> Item -> P.ListT m Item
-doCompile f x = do
-  P.Select $
-    _doCompile f x P.yield
-
-
-runCompile :: (P.MonadIO m) => (Patt -> Patt) -> Item -> m [Item]
-runCompile f x = P.toListM . P.enumerate $ doCompile f x
-
-
-runCompileTy_ :: (P.MonadIO m) => (Ty Patt a -> Ty Patt b) -> Ty Item a -> m [Ty Item b]
-runCompileTy_ f x =
-  map Ty <$> runCompile g (unTy x)
-  where
-    g :: Patt -> Patt
-    g = unTy . f . Ty
-
-
-runCompileTy
-  :: (IsItem a, IsItem b, P.MonadIO m)
-  => (Ty Patt a -> Ty Patt b)
-  -> a
-  -> m [b]
-runCompileTy f x =
-  map decode <$> runCompileTy_ f (encode I x)
-
-
--- -- | Check if the pattern matches with the given item.
--- isMatch :: (P.MonadIO m) => Patt -> Item -> m Bool
--- isMatch p x =
---   not <$> P.null (P.enumerate (doMatch p x))
-
-
-_compile2 :: P.MonadIO m => (Patt -> Patt -> Patt) -> Item -> Item -> MatchT m Item
-_compile2 f x y =
-  eval (f (fromItem_ x) (fromItem_ y))
-
-
+-- fromItem_ :: Item -> Patt
+-- fromItem_ x =
+--   case x of
+--     I Unit -> P Unit
+--     I (Sym x) -> P (Sym x)
+--     I (Tag k p) -> P (Tag k (fromItem_ p))
+--     I (Vec v) -> P (Vec $ fmap fromItem_ v)
+--
+--
+-- fromItem :: Ty Item a -> Ty Patt a
+-- fromItem = Ty . fromItem_ . unTy
+--
+--
+-- compile_ :: P.MonadIO m => (Patt -> Patt) -> Item -> MatchT m Item
+-- compile_ f x =
+--   eval (f (fromItem_ x))
+--
+--
 -- compile :: P.MonadIO m => (Ty Patt a -> Ty Patt b) -> Ty Item a -> MatchT m (Ty Item b)
 -- compile f x =
 --   Ty <$> eval (unTy $ f (fromItem x))
-
-
--- | Lower-level handler-based `doCompile`.
-_doCompile2
-  :: (P.MonadIO m)
-  => (Patt -> Patt -> Patt)
-  -> Item
-  -> Item
-  -> (Item -> m ()) -- ^ Monadic handler
-  -> m ()
-_doCompile2 f x y h = _toListT (_compile2 f x y) h
-
-
--- | Perform compilation and generate the list of possible global variable
--- binding environments which satisfy the match.
-doCompile2 :: (P.MonadIO m) => (Patt -> Patt -> Patt) -> Item -> Item -> P.ListT m Item
-doCompile2 f x y = do
-  P.Select $
-    _doCompile2 f x y P.yield
-
-
-runCompile2 :: (P.MonadIO m) => (Patt -> Patt -> Patt) -> Item -> Item -> m [Item]
-runCompile2 f x y = P.toListM . P.enumerate $ doCompile2 f x y
-
-
-_runCompileTy2
-  :: (P.MonadIO m)
-  => (Ty Patt a -> Ty Patt b -> Ty Patt c)
-  -> Ty Item a -> Ty Item b -> m [Ty Item c]
-_runCompileTy2 f x y =
-  map Ty <$> runCompile2 g (unTy x) (unTy y)
-  where
-    g :: Patt -> Patt -> Patt
-    g x y = unTy $ f (Ty x) (Ty y)
-
-
-runCompileTy2
-  :: (IsItem a, IsItem b, IsItem c, P.MonadIO m)
-  => (Ty Patt a -> Ty Patt b -> Ty Patt c)
-  -> a -> b
-  -> m [c]
-runCompileTy2 f x y =
-  map decode <$> _runCompileTy2 f (encode I x) (encode I y)
+--
+--
+-- -- | Lower-level handler-based `doCompile`.
+-- _doCompile
+--   :: (P.MonadIO m)
+--   => (Patt -> Patt)
+--   -> Item
+--   -> (Item -> m ()) -- ^ Monadic handler
+--   -> m ()
+-- _doCompile f x h = _toListT (compile_ f x) h
+--
+--
+-- -- | Perform compilation and generate the list of possible global variable
+-- -- binding environments which satisfy the match.
+-- doCompile :: (P.MonadIO m) => (Patt -> Patt) -> Item -> P.ListT m Item
+-- doCompile f x = do
+--   P.Select $
+--     _doCompile f x P.yield
+--
+--
+-- runCompile :: (P.MonadIO m) => (Patt -> Patt) -> Item -> m [Item]
+-- runCompile f x = P.toListM . P.enumerate $ doCompile f x
+--
+--
+-- runCompileTy_ :: (P.MonadIO m) => (Ty Patt a -> Ty Patt b) -> Ty Item a -> m [Ty Item b]
+-- runCompileTy_ f x =
+--   map Ty <$> runCompile g (unTy x)
+--   where
+--     g :: Patt -> Patt
+--     g = unTy . f . Ty
+--
+--
+-- runCompileTy
+--   :: (IsItem a, IsItem b, P.MonadIO m)
+--   => (Ty Patt a -> Ty Patt b)
+--   -> a
+--   -> m [b]
+-- runCompileTy f x =
+--   map decode <$> runCompileTy_ f (encode I x)
+--
+--
+-- -- -- | Check if the pattern matches with the given item.
+-- -- isMatch :: (P.MonadIO m) => Patt -> Item -> m Bool
+-- -- isMatch p x =
+-- --   not <$> P.null (P.enumerate (doMatch p x))
+--
+--
+-- _compile2 :: P.MonadIO m => (Patt -> Patt -> Patt) -> Item -> Item -> MatchT m Item
+-- _compile2 f x y =
+--   eval (f (fromItem_ x) (fromItem_ y))
+--
+--
+-- -- compile :: P.MonadIO m => (Ty Patt a -> Ty Patt b) -> Ty Item a -> MatchT m (Ty Item b)
+-- -- compile f x =
+-- --   Ty <$> eval (unTy $ f (fromItem x))
+--
+--
+-- -- | Lower-level handler-based `doCompile`.
+-- _doCompile2
+--   :: (P.MonadIO m)
+--   => (Patt -> Patt -> Patt)
+--   -> Item
+--   -> Item
+--   -> (Item -> m ()) -- ^ Monadic handler
+--   -> m ()
+-- _doCompile2 f x y h = _toListT (_compile2 f x y) h
+--
+--
+-- -- | Perform compilation and generate the list of possible global variable
+-- -- binding environments which satisfy the match.
+-- doCompile2 :: (P.MonadIO m) => (Patt -> Patt -> Patt) -> Item -> Item -> P.ListT m Item
+-- doCompile2 f x y = do
+--   P.Select $
+--     _doCompile2 f x y P.yield
+--
+--
+-- runCompile2 :: (P.MonadIO m) => (Patt -> Patt -> Patt) -> Item -> Item -> m [Item]
+-- runCompile2 f x y = P.toListM . P.enumerate $ doCompile2 f x y
+--
+--
+-- _runCompileTy2
+--   :: (P.MonadIO m)
+--   => (Ty Patt a -> Ty Patt b -> Ty Patt c)
+--   -> Ty Item a -> Ty Item b -> m [Ty Item c]
+-- _runCompileTy2 f x y =
+--   map Ty <$> runCompile2 g (unTy x) (unTy y)
+--   where
+--     g :: Patt -> Patt -> Patt
+--     g x y = unTy $ f (Ty x) (Ty y)
+--
+--
+-- runCompileTy2
+--   :: (IsItem a, IsItem b, IsItem c, P.MonadIO m)
+--   => (Ty Patt a -> Ty Patt b -> Ty Patt c)
+--   -> a -> b
+--   -> m [c]
+-- runCompileTy2 f x y =
+--   map decode <$> _runCompileTy2 f (encode I x) (encode I y)
 
 
 --------------------------------------------------

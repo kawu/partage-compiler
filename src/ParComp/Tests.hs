@@ -1,4 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 
 -- | Provisional module for testing
@@ -13,8 +15,8 @@ import           ParComp.Patt
 -- | A strange variation on `cons`
 consF :: Ty PattFun ([Int] -> [Int])
 consF = with1arg $ \xs ->
-  (assign (cons P one anyp) xs `seqp` cons P one xs) `choice`
-  (assign (cons P two anyp) xs `seqp` cons P two xs) `choice`
+  (assign (cons one anyp) xs `seqp` cons one xs) `choice`
+  (assign (cons two anyp) xs `seqp` cons two xs) `choice`
   xs
   where
     one = encode P 1
@@ -24,10 +26,10 @@ consF = with1arg $ \xs ->
 -- | Append (see `appendF'` for another variant)
 appendF :: Ty PattFun ([a] -> [a] -> [a])
 appendF = with2arg $ \xs ys ->
-  (check (xs `eq` nil P) `seqp` ys) `choice`
+  (check (xs `eq` nil) `seqp` ys) `choice`
   (
-    (cons P hd tl `assign` xs) `seqp`
-    (cons P hd (apply2 appendF tl ys))
+    (cons hd tl `assign` xs) `seqp`
+    (cons hd (apply2 appendF tl ys))
   )
   where
     hd = var "hd"
@@ -35,13 +37,13 @@ appendF = with2arg $ \xs ys ->
 
 
 -- | Append
-appendF' :: Ty PattFun ([a] -> [a] -> [a])
+appendF' :: forall a. Ty PattFun ([a] -> [a] -> [a])
 appendF' = with2arg $ \xs ys ->
-  ((xs `assign` nil P) `seqp` ys) `choice`
+  ((xs `assign` nil) `seqp` ys) `choice`
   (
-    (cons P hd tl `assign` xs) `seqp`
-    (cons P hd (apply2 appendF' tl ys))
+    (cons hd tl `assign` xs) `seqp`
+    (cons hd (apply2 appendF' tl ys))
   )
   where
-    hd = var "hd"
-    tl = var "tl"
+    hd = var "hd" :: Ty Patt a
+    tl = var "tl" :: Ty Patt [a]
