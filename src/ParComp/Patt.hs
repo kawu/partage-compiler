@@ -7,6 +7,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
 
@@ -51,7 +52,11 @@ module ParComp.Patt
 
   -- * Functions
   -- ** Native
-  , Args (..)
+  , fun
+  , arg
+  , withArgs0
+  , withArgs1
+  , withArgs2
   , Vars ()
   , withVars
   , Apply (..)
@@ -184,13 +189,31 @@ cons = Ty.cons P
 --------------------------------------------------
 
 
+-- -- | Type class to introduce free variables.
+-- class Vars f a where
+--   -- | Generate free variables to produce a function.  The first argument
+--   -- represents the variable ID.
+--   genVars :: Int -> f -> Ty Patt a
+--
+-- instance (a ~ a') => Vars (Ty Patt a) a' where
+--   genVars _ = id
+--
+-- instance Vars f b => Vars (Ty Patt a -> f) b where
+--   genVars k f = genVars (k+1) $ f (var $ "var@" ++ show k)
+--
+--
+-- -- | Generate free variables to produce a function.
+-- withVars :: Vars f a => f -> Ty Patt a
+-- withVars = genVars 1
+
+
 -- | Type class to introduce free variables.
 class Vars f a where
   -- | Generate free variables to produce a function.  The first argument
   -- represents the variable ID.
-  genVars :: Int -> f -> Ty Patt a
+  genVars :: Int -> f -> a
 
-instance (a ~ a') => Vars (Ty Patt a) a' where
+instance (a ~ a') => Vars (Ty p a) (Ty p a') where
   genVars _ = id
 
 instance Vars f b => Vars (Ty Patt a -> f) b where
@@ -198,35 +221,58 @@ instance Vars f b => Vars (Ty Patt a -> f) b where
 
 
 -- | Generate free variables to produce a function.
-withVars :: Vars f a => f -> Ty Patt a
+withVars :: Vars f (Ty p a) => f -> Ty p a
 withVars = genVars 1
 
 
--- | Type class to represent variadic pattern-level functions.
-class Args a f where
-  -- | Instantiate @a@ with as many arguments as needed to produce a function.
-  withArgs :: a -> Ty PattFun f
+-- -- | Type class to represent variadic pattern-level functions.
+-- class Args a f where
+--   -- | Instantiate @a@ with as many arguments as needed to produce a function.
+--   withArgs :: a -> Ty PattFun f
+--
+-- instance f ~ a => Args (Ty Patt a) f where
+--   withArgs = Ty . PattFun [] . unTy
+--
+-- instance (f ~ (a -> b)) => Args (Ty Patt a -> Ty Patt b) f where
+--   withArgs f =
+--     -- TODO: Make sure function `f` does not already contain variable "arg@1"!
+--     Ty $ PattFun [unTy arg1] (unTy $ f arg1)
+--     where
+--       arg1 = var "arg@1"
+--
+-- instance (f ~ (a -> b -> c)) => Args
+--     (Ty Patt a -> Ty Patt b -> Ty Patt c)
+--     f
+--     where
+--   withArgs f =
+--     -- TODO: Make sure function `f` does not already contain variable "arg@1"!
+--     Ty $ PattFun [unTy arg1, unTy arg2] (unTy $ f arg1 arg2)
+--     where
+--       arg1 = var "arg@1"
+--       arg2 = var "arg@2"
 
-instance f ~ a => Args (Ty Patt a) f where
-  withArgs = Ty . PattFun [] . unTy
 
-instance (f ~ (a -> b)) => Args (Ty Patt a -> Ty Patt b) f where
-  withArgs f =
-    -- TODO: Make sure function `f` does not already contain variable "arg@1"!
-    Ty $ PattFun [unTy arg1] (unTy $ f arg1)
-    where
-      arg1 = var "arg@1"
+-- | Create a 0-argument pattern-level function.
+fun :: Ty Patt a -> Ty PattFun a
+fun body = Ty $ PattFun [] (unTy body)
 
-instance (f ~ (a -> b -> c)) => Args
-    (Ty Patt a -> Ty Patt b -> Ty Patt c)
-    f
-    where
-  withArgs f =
-    -- TODO: Make sure function `f` does not already contain variable "arg@1"!
-    Ty $ PattFun [unTy arg1, unTy arg2] (unTy $ f arg1 arg2)
-    where
-      arg1 = var "arg@1"
-      arg2 = var "arg@2"
+
+-- | Add an argument to a pattern-level function.
+arg :: Ty Patt a -> Ty PattFun f -> Ty PattFun (a -> f)
+arg (Ty x) (Ty (PattFun xs body)) = Ty $ PattFun (x:xs) body
+
+
+-- | Create 0-argument pattern-level function.
+withArgs0 :: Ty Patt a -> Ty PattFun a
+withArgs0 = fun
+
+-- | Create 1-argument pattern-level function.
+withArgs1 :: Ty Patt a -> Ty Patt b -> Ty PattFun (a -> b)
+withArgs1 x = arg x . fun
+
+-- | Create 2-argument pattern-level function.
+withArgs2 :: Ty Patt a -> Ty Patt b -> Ty Patt c -> Ty PattFun (a -> b -> c)
+withArgs2 x y = arg x . arg y . fun
 
 
 -- | Type class to represent application of variadic pattern-level functions.

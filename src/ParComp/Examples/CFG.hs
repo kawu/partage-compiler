@@ -203,13 +203,13 @@ complete =
 -- | CFG predict rule
 predict :: Ty PattFun (TopItem -> TopItem -> TopItem)
 predict =
-  withArgs $ \leftArg rightArg ->
-    withVars $ \vbody vi vj vB vC valpha ->
-      assign (item (rule anyp vbody) (span vi vj)) leftArg `seqp`
+  withVars $ \vbody vi vj vB vC valpha ->
+    arg (item (rule anyp vbody) (span vi vj)) .
+    arg (top (rule vC valpha)) .
+    fun $
       assign
-        (pair anyp (dot .: just vB .: anyp))
+        (anyp `pair` (dot .: just vB .: anyp))
         (splitAtDot vbody) `seqp`
-      assign (top (rule vC valpha)) rightArg  `seqp`
       check (label vB `eq` label vC) `seqp`
       item (rule vC valpha) (span vj vj)
 

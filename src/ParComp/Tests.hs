@@ -4,6 +4,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TupleSections #-}
 
 
@@ -20,8 +21,9 @@ import qualified ParComp.Patt.Item as I
 -- | List length
 lengthF :: Ty PattFun ([a] -> Int)
 lengthF =
-  withArgs $ \xs ->
-    withVars $ \tl ->
+  withVars $ \xs tl ->
+    arg xs $
+    fun $
       ((xs `assign` nil) `seqp` zero) `choice`
       (
         (cons anyp tl `assign` xs) `seqp`
@@ -35,7 +37,7 @@ lengthF =
 
 -- | A strange variation on `cons`
 consF :: Ty PattFun ([Int] -> [Int])
-consF = withArgs $ \xs ->
+consF = withVars $ \xs -> arg xs $ fun $
   (assign (cons one anyp) xs `seqp` cons one xs) `choice`
   (assign (cons two anyp) xs `seqp` cons two xs) `choice`
   xs
@@ -46,22 +48,19 @@ consF = withArgs $ \xs ->
 
 -- | Append (see `appendF'` for another variant)
 appendF :: Ty PattFun ([a] -> [a] -> [a])
-appendF =
-  withArgs $ \xs ys ->
-    withVars $ \hd tl ->
-      (check (xs `eq` nil) `seqp` ys) `choice`
-      (
-        (cons hd tl `assign` xs) `seqp`
-        (cons hd (apply appendF tl ys))
-      )
-
+appendF = withVars $ \xs ys hd tl ->
+  arg xs . arg ys . fun $
+    (check (xs `eq` nil) `seqp` ys) `choice`
+    (
+      (cons hd tl `assign` xs) `seqp`
+      (cons hd (apply appendF tl ys))
+    )
 
 appendF' :: Ty PattFun ([a] -> [a] -> [a])
-appendF' =
-  withArgs $ \xs ys ->
-    withVars $ \hd tl ->
-      ((xs `assign` nil) `seqp` ys) `choice`
-      (
-        (cons hd tl `assign` xs) `seqp`
-        (cons hd (apply appendF' tl ys))
-      )
+appendF' = withVars $ \xs ys hd tl ->
+  arg xs . arg ys . fun $
+    ((xs `assign` nil) `seqp` ys) `choice`
+    (
+      (cons hd tl `assign` xs) `seqp`
+      (cons hd (apply appendF' tl ys))
+    )
