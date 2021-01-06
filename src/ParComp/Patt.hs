@@ -46,7 +46,7 @@ module ParComp.Patt
   , anyp
   , seqp
   , choice
-  , assign
+  , match
   , check
   , eq
   , fix
@@ -115,9 +115,9 @@ choice :: Ty Patt a -> Ty Patt a -> Ty Patt a
 choice (Ty p) (Ty q) = Ty . O $ Choice p q
 
 
--- | Assignment pattern
-assign :: Ty Patt a -> Ty Patt a -> Ty Patt b
-assign (Ty x) (Ty v) = Ty . O $ Assign x v
+-- | Assignment/matching pattern
+match :: Ty Patt a -> Ty Patt a -> Ty Patt b
+match (Ty x) (Ty v) = Ty . O $ Assign x v
 
 
 -- | Guard pattern

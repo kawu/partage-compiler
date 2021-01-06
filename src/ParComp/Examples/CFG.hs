@@ -138,7 +138,7 @@ complete =
     arg (item (rule a as) (span i j)) .
     arg (item (rule c (suffix (dot .: nil))) (span j k)) .
     fun $
-      assign
+      match
         (pair alpha (dot .: just b .: beta))
         (apply splitAt dot as) `seqp`
       check (label b `eq` label c) `seqp`
@@ -154,7 +154,7 @@ predict =
     arg (item (rule anyp (suffix (dot .: just b .: anyp))) (span i j)) .
     arg (top (rule c alpha)) .
     fun $
-      assign (label b) (label c) `seqp`
+      match (label b) (label c) `seqp`
       item (rule c alpha) (span j j)
 
 
@@ -162,9 +162,9 @@ predict =
 append :: Ty PattFun ([a] -> [a] -> [a])
 append = withVars $ \xs ys hd tl ->
   arg xs . arg ys . fun $
-    (assign xs nil `seqp` ys) `choice`
+    (match xs nil `seqp` ys) `choice`
     (
-      (cons hd tl `assign` xs) `seqp`
+      (cons hd tl `match` xs) `seqp`
       (cons hd (apply append tl ys))
     )
 
@@ -178,12 +178,16 @@ suffix p = fix $ p `choice` cons anyp rec
 splitAt :: Ty PattFun (a -> [a] -> ([a], [a]))
 splitAt = withVars $ \at xs hd tl pref suff ->
   arg at . arg xs . fun $
-    (assign xs nil `seqp` pair nil nil) `choice`
-    (assign (hd .: tl) xs `seqp` (
-      (assign hd at `seqp` pair nil xs) `choice`
-      (assign
-        (pair pref suff)
-        (apply splitAt at tl) `seqp` pair (hd .: pref) suff)
+    ( match xs nil `seqp`
+      pair nil nil
+    ) `choice`
+    ( match (hd .: tl) xs `seqp` (
+      ( match hd at `seqp`
+        pair nil xs
+      ) `choice`
+      ( match (pair pref suff) (apply splitAt at tl) `seqp`
+        pair (hd .: pref) suff
+      )
     ))
 
 
