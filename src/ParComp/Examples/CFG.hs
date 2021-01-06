@@ -132,86 +132,33 @@ label =
 
 
 -- | CFG complete rule
-complete :: PattFun
+complete :: Ty PattFun (TopItem -> TopItem -> TopItem)
 complete =
-
-  PattFun
-  { pfParams  = [unTy leftP, unTy rightP]
-  , pfBody = unTy downP
-  }
-
-  where
-
-    -- Variables (declaring them with type annotations provides additional type
-    -- safety, but is not obligatory; see the prediction rule below, where type
-    -- annotations are not used, for comparison)
-    v_A = var "A"         :: Ty Patt Node
-    v_As = var "As"       :: Ty Patt Body
-    v_B = var "B"         :: Ty Patt Node
-    v_C = var "C"         :: Ty Patt Node
-    v_alpha = var "alpha" :: Ty Patt Body
-    v_beta = var "beta"   :: Ty Patt Body
-    v_i = var "i"         :: Ty Patt Int
-    v_j = var "j"         :: Ty Patt Int
-    v_k = var "k"         :: Ty Patt Int
-
-    -- First antecendent
-    leftP =
-      item (rule v_A v_As) (span v_i v_j) `seqp`
+  withVars $ \a as b c alpha beta i j k ->
+    arg (item (rule a as) (span i j)) .
+    arg (item (rule c (suffix (dot .: nil))) (span j k)) .
+    fun $
       assign
-        (pair v_alpha (dot .: just v_B .: v_beta))
-        (splitAtDot v_As)
-
-    -- Second antecendent
-    rightP = item
-      (rule v_C (suffix (dot .: nil)))
-      (span v_j v_k)
-      `seqp`
-      check condP
-
-    -- Side condition
-    condP = eq (label v_B) (label v_C)
-
-    -- Consequent
-    downP = item
-      (rule v_A (v_alpha `append` (just v_B .: dot .: v_beta)))
-      (span v_i v_k)
-
-
--- -- | CFG predict rule
--- predict :: PattFun
--- predict =
---   PattFun [unTy leftP, unTy rightP] (unTy downP)
---   where
---     leftP = item
---       (rule anyp (var "body"))
---       (span (var "i") (var "j"))
---       `seqp`
---       assign
---         (pair anyp (dot .: just (var "B") .: anyp))
---         (splitAtDot (var "body"))
---     rightP = top (rule (var "C") (var "alpha"))
---       `seqp` check condP
---     condP = eq
---       (label (var "B"))
---       (label (var "C"))
---     downP = item
---       (rule (var "C") (var "alpha"))
---       (span (var "j") (var "j"))
+        (pair alpha (dot .: just b .: beta))
+        (splitAtDot as) `seqp`
+      check (label b `eq` label c) `seqp`
+      item
+        (rule a (alpha `append` (just b .: dot .: beta)))
+        (span i k)
 
 
 -- | CFG predict rule
 predict :: Ty PattFun (TopItem -> TopItem -> TopItem)
 predict =
-  withVars $ \vbody vi vj vB vC valpha ->
-    arg (item (rule anyp vbody) (span vi vj)) .
-    arg (top (rule vC valpha)) .
+  withVars $ \body i j b c alpha ->
+    arg (item (rule anyp body) (span i j)) .
+    arg (top (rule c alpha)) .
     fun $
       assign
-        (anyp `pair` (dot .: just vB .: anyp))
-        (splitAtDot vbody) `seqp`
-      check (label vB `eq` label vC) `seqp`
-      item (rule vC valpha) (span vj vj)
+        (anyp `pair` (dot .: just b .: anyp))
+        (splitAtDot body) `seqp`
+      check (label b `eq` label c) `seqp`
+      item (rule c alpha) (span j j)
 
 
 -------------------------------------------------------------------------------
@@ -284,7 +231,7 @@ runCFG :: IO (Maybe Item)
 runCFG = do
   let baseItems = map (unTy . encode I) $ cfgBaseItems testSent testRules
       ruleMap = M.fromList
-        [ ("CO", complete)
+        [ ("CO", unTy complete)
         , ("PR", unTy predict)
         ]
       zero = pos 0
