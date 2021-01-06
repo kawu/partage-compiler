@@ -140,7 +140,7 @@ complete =
     fun $
       assign
         (pair alpha (dot .: just b .: beta))
-        (splitAtDot as) `seqp`
+        (apply splitAt dot as) `seqp`
       check (label b `eq` label c) `seqp`
       item
         (rule a (apply append alpha (just b .: dot .: beta)))
@@ -162,7 +162,7 @@ predict =
 append :: Ty PattFun ([a] -> [a] -> [a])
 append = withVars $ \xs ys hd tl ->
   arg xs . arg ys . fun $
-    (check (xs `eq` nil) `seqp` ys) `choice`
+    (assign xs nil `seqp` ys) `choice`
     (
       (cons hd tl `assign` xs) `seqp`
       (cons hd (apply append tl ys))
@@ -174,24 +174,24 @@ suffix :: Ty Patt [a] -> Ty Patt [a]
 suffix p = fix $ p `choice` cons anyp rec
 
 
--------------------------------------------------------------------------------
--- Alternative foreign functions, for the record
--------------------------------------------------------------------------------
+-- | Split a list at a given element.
+splitAt :: Ty PattFun (a -> [a] -> ([a], [a]))
+splitAt = withVars $ \at xs hd tl pref suff ->
+  arg at . arg xs . fun $
+    (assign xs nil `seqp` pair nil nil) `choice`
+    (assign (hd .: tl) xs `seqp` (
+      (assign hd at `seqp` pair nil xs) `choice`
+      (assign
+        (pair pref suff)
+        (apply splitAt at tl) `seqp` pair (hd .: pref) suff)
+    ))
 
 
--- -- | Append two lists
--- append :: Ty Patt [a] -> Ty Patt [a] -> Ty Patt [a]
--- append =
---   foreign2arg "append" I.append
+-- | Operator synonym to `cons`
+(.:) :: Ty Patt a -> Ty Patt [a] -> Ty Patt [a]
+(.:) = cons
+infixr 5 .:
 
-
--- | Check if the item contains a given suffix.
--- suffix p =
---   xs `seqp` check cond `seqp` xs
---   where
---     xs = var "xs"
---     cond = eq (hasSuffix p xs) true
---     hasSuffix = foreign2arg "suffix" I.suffix
 
 -------------------------------------------------------------------------------
 -- Axioms
@@ -280,44 +280,50 @@ testCFG = do
     Just it -> print $ (decode (Ty it) :: TopItem)
 
 
---------------------------------------------------
--- Utility patterns and functions
---------------------------------------------------
+-------------------------------------------------------------------------------
+-- Alternative foreign functions, for the record
+-------------------------------------------------------------------------------
 
 
--- | Operator synonym to `cons`
--- (.:) :: (Patt repr) => repr a -> repr [a] -> repr [a]
-(.:) :: Ty Patt a -> Ty Patt [a] -> Ty Patt [a]
-(.:) = cons
-infixr 5 .:
+-- -- | Append two lists
+-- append :: Ty Patt [a] -> Ty Patt [a] -> Ty Patt [a]
+-- append =
+--   foreign2arg "append" I.append
 
 
-splitAtDot :: Ty Patt Body -> Ty Patt (Body, Body)
-splitAtDot =
-  splitAt dot
+-- -- | Check if the item contains a given suffix.
+-- suffix p =
+--   xs `seqp` check cond `seqp` xs
+--   where
+--     xs = var "xs"
+--     cond = eq (hasSuffix p xs) true
+--     hasSuffix = foreign2arg "suffix" I.suffix
 
 
--- | Split a list at a given element
-splitAt :: Ty Patt a -> Ty Patt [a] -> Ty Patt ([a], [a])
-splitAt =
-
-  foreign2arg "splitAt" doit
-
-  where
-
-    doit :: Ty Item a -> Ty Item [a] -> Ty Item ([a], [a])
-    doit at xs =
-      let (ls, rs) = go at xs
-       in I.pair ls rs
-
-    go at list = I.listI
-      (I.nil, I.nil)
-      (\x xs ->
-         if x == at
-         then (I.nil, list)
-         else
-           let (pref, suff) = go at xs
-            in (I.cons x pref, suff)
-      ) list
-
-
+-- splitAtDot :: Ty Patt Body -> Ty Patt (Body, Body)
+-- splitAtDot =
+--   splitAt dot
+--
+--
+-- -- | Split a list at a given element
+-- splitAt :: Ty Patt a -> Ty Patt [a] -> Ty Patt ([a], [a])
+-- splitAt =
+--
+--   foreign2arg "splitAt" doit
+--
+--   where
+--
+--     doit :: Ty Item a -> Ty Item [a] -> Ty Item ([a], [a])
+--     doit at xs =
+--       let (ls, rs) = go at xs
+--        in I.pair ls rs
+--
+--     go at list = I.listI
+--       (I.nil, I.nil)
+--       (\x xs ->
+--          if x == at
+--          then (I.nil, list)
+--          else
+--            let (pref, suff) = go at xs
+--             in (I.cons x pref, suff)
+--       ) list
