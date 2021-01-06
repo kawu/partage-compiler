@@ -58,6 +58,8 @@ data PMState = PMState
     -- ^ Variable binding environment
   , _varGenIx :: Int
     -- ^ Variable index used for fresh variable generation
+  , _fix :: Maybe Patt
+    -- ^ Fixed recursive pattern
   }
 $( makeLenses [''PMState] )
 
@@ -77,7 +79,7 @@ type MatchT m a =
 
 -- | Empty state, with no variable bindings
 emptyState :: PMState
-emptyState = PMState M.empty 0
+emptyState = PMState M.empty 0 Nothing
 
 
 -- | Lift the computation in the inner monad to `MatchT`.
@@ -211,6 +213,33 @@ ditchVar v = do
 --      Just fun -> return fun
 
 
+-- | Perform match with the recursive pattern.
+withFix
+  :: (Monad m)
+  => Patt
+  -> MatchT m a
+  -> MatchT m a
+withFix p m = do
+  -- Retrieve the old fix
+  oldFix <- RWS.gets $ getL fix
+  -- Register the new fix
+  RWS.modify' $ setL fix (Just p)
+  m <|> do
+    -- Restore the old fix
+    RWS.modify' $ setL fix oldFix
+    empty
+
+
+-- | Retrieve the fixed recursive pattern.
+fixed :: (Monad m) => MatchT m Patt
+fixed = do
+  mayFix <- RWS.gets $ getL fix
+  case mayFix of
+    Nothing -> empty
+    Just p  -> return p
+
+
+
 --------------------------------------------------
 -- High-level interface
 --------------------------------------------------
@@ -308,6 +337,20 @@ match (O p) it =
     Assign p q -> do
       x <- eval q
       match p x
+    Apply f xs -> do
+      args <- mapM eval xs
+      it' <- each $ fbody f args
+      guard $ it == it'
+    ApplyP f xs -> do
+      args <- mapM eval xs
+      it' <- apply f args
+      guard $ it == it'
+    Fix p -> do
+      withFix p $ do
+        match p it
+    Rec -> do
+      p <- fixed
+      match p it
 
 
 -- | Check a condition expression.
@@ -383,6 +426,8 @@ eval (O p) =
 
     -- Things that should not happen
     Any -> error "eval Any"
+    Fix _ -> error "eval Fix"
+    Rec -> error "eval Rec"
 
 
 -- | Apply a function to a given list of arguments.

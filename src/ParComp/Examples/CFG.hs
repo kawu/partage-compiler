@@ -143,23 +143,55 @@ complete =
         (splitAtDot as) `seqp`
       check (label b `eq` label c) `seqp`
       item
-        (rule a (alpha `append` (just b .: dot .: beta)))
+        (rule a (apply append alpha (just b .: dot .: beta)))
         (span i k)
 
 
 -- | CFG predict rule
 predict :: Ty PattFun (TopItem -> TopItem -> TopItem)
 predict =
-  withVars $ \body i j b c alpha ->
-    arg (item (rule anyp body) (span i j)) .
+  withVars $ \i j b c alpha ->
+    arg (item (rule anyp (suffix (dot .: just b .: anyp))) (span i j)) .
     arg (top (rule c alpha)) .
     fun $
-      assign
-        (anyp `pair` (dot .: just b .: anyp))
-        (splitAtDot body) `seqp`
-      check (label b `eq` label c) `seqp`
+      assign (label b) (label c) `seqp`
       item (rule c alpha) (span j j)
 
+
+-- | Append two lists
+append :: Ty PattFun ([a] -> [a] -> [a])
+append = withVars $ \xs ys hd tl ->
+  arg xs . arg ys . fun $
+    (check (xs `eq` nil) `seqp` ys) `choice`
+    (
+      (cons hd tl `assign` xs) `seqp`
+      (cons hd (apply append tl ys))
+    )
+
+
+-- | Match a suffix of a given list.  Higher-order, recursive pattern.
+suffix :: Ty Patt [a] -> Ty Patt [a]
+suffix p = fix $ p `choice` cons anyp rec
+
+
+-------------------------------------------------------------------------------
+-- Alternative foreign functions, for the record
+-------------------------------------------------------------------------------
+
+
+-- -- | Append two lists
+-- append :: Ty Patt [a] -> Ty Patt [a] -> Ty Patt [a]
+-- append =
+--   foreign2arg "append" I.append
+
+
+-- | Check if the item contains a given suffix.
+-- suffix p =
+--   xs `seqp` check cond `seqp` xs
+--   where
+--     xs = var "xs"
+--     cond = eq (hasSuffix p xs) true
+--     hasSuffix = foreign2arg "suffix" I.suffix
 
 -------------------------------------------------------------------------------
 -- Axioms
@@ -289,19 +321,3 @@ splitAt =
       ) list
 
 
--- | Append two lists
-append :: Ty Patt [a] -> Ty Patt [a] -> Ty Patt [a]
-append =
-  foreign2arg "append" I.append
-
-
--- | Check if the list contains a given suffix.
--- TODO: This is somewhat ugly, also the argument pattern cannot contain free
--- variables...
-suffix :: Ty Patt [a] -> Ty Patt [a]
-suffix p =
-  xs `seqp` check cond `seqp` xs
-  where
-    xs = var "xs"
-    cond = eq (hasSuffix p xs) true
-    hasSuffix = foreign2arg "suffix" I.suffix

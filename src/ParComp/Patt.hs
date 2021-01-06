@@ -49,6 +49,8 @@ module ParComp.Patt
   , assign
   , check
   , eq
+  , fix
+  , rec
 
   -- * Functions
   -- ** Native
@@ -127,6 +129,16 @@ check = Ty . O . Guard
 -- items can be compared)
 eq :: Ty Patt a -> Ty Patt a -> Cond Patt
 eq (Ty p) (Ty q) = Eq p q
+
+
+-- | Fix recursive pattern
+fix :: Ty Patt a -> Ty Patt a
+fix (Ty p) = Ty . O $ Fix p
+
+
+-- | Call recursive pattern
+rec :: Ty Patt a
+rec  = Ty $ O Rec
 
 
 --------------------------------------------------

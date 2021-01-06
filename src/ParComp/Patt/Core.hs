@@ -139,6 +139,8 @@ varsIn (O p) =
     ApplyP _f xs -> S.unions (map varsIn xs)
     Assign p q -> varsIn p `S.union` varsIn q
     Guard c -> varsInCond c
+    Fix p -> varsIn p
+    Rec -> S.empty
 
 
 -- | Determine the set of variables used in a pattern.
@@ -169,6 +171,8 @@ replaceVars varMap (O p) =
     ApplyP f xs -> ApplyP f (map (replaceVars varMap) xs)
     Assign p q -> Assign (replaceVars varMap p) (replaceVars varMap q)
     Guard c -> Guard $ replaceCondVars varMap c
+    Fix p' -> Fix $ replaceVars varMap p'
+    Rec -> Rec
 
 
 -- | Substitute variables in a condition.
@@ -222,7 +226,7 @@ data Op e where
   -- | Apply (foreign?) function to a pattern
   Apply   :: ForeignFun -> [e] -> Op e
   -- | Apply (native?) function to a list of arguments
-  ApplyP   :: PattFun -> [e] -> Op e
+  ApplyP  :: PattFun -> [e] -> Op e
   -- | Pattern assignment
   Assign  :: e -> e -> Op e
 
@@ -232,6 +236,14 @@ data Op e where
 
   -- | Pattern guard
   Guard   :: Cond e -> Op e
+
+  -- NOTE: Experimental part of the language: recursive patterns
+
+  -- | Fix: `Fix p` defines a recursive pattern `p`, which can be referred to
+  -- with `Rec` from within `p`
+  Fix     :: e -> Op e
+  -- | Rec: call recursive pattern `p` defined with `Fix p`
+  Rec     :: Op e
 
   deriving (Show, Eq, Ord)
 
