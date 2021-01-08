@@ -176,7 +176,7 @@ suffix p = fix $ p `choice` cons anyp rec
 
 -- | Split a list at a given element.
 splitAt :: Ty PattFun (a -> [a] -> ([a], [a]))
-splitAt = withVars $ \at xs hd tl pref suff ->
+splitAt = withVars $ \at xs hd tl ls rs ->
   arg at . arg xs . fun $
     ( match xs nil `seqp`
       pair nil nil
@@ -185,8 +185,8 @@ splitAt = withVars $ \at xs hd tl pref suff ->
       ( match hd at `seqp`
         pair nil xs
       ) `choice`
-      ( match (pair pref suff) (apply splitAt at tl) `seqp`
-        pair (hd .: pref) suff
+      ( match (pair ls rs) (apply splitAt at tl) `seqp`
+        pair (hd .: ls) rs
       )
     ))
 

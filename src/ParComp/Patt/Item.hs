@@ -2,7 +2,7 @@
 {-# LANGUAGE ViewPatterns #-}
 
 
--- | Item-level functions
+-- | Typed item-level functions
 
 
 module ParComp.Patt.Item
