@@ -223,7 +223,7 @@ data Op e where
   -- patterns.  `Choice` provides non-determinism in pattern matching.
   Choice  :: e -> e -> Op e
 
-  -- | Apply (foreign?) function to a pattern
+  -- | Apply (foreign?) function to a list of arguments
   Apply   :: ForeignFun -> [e] -> Op e
   -- | Apply (native?) function to a list of arguments
   ApplyP  :: PattFun -> [e] -> Op e
