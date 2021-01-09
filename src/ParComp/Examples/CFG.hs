@@ -243,7 +243,7 @@ testCFG :: IO ()
 testCFG = do
   runCFG >>= \case
     Nothing -> putStrLn "# No parse found"
-    Just it -> print $ (decode (Ty it) :: TopItem)
+    Just it -> print (decode (Ty it) :: TopItem)
 
 
 -------------------------------------------------------------------------------

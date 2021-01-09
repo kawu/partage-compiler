@@ -1,12 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE LambdaCase #-}
 
 
 -- | Tree-substitution grammar parsing
 
 
 module ParComp.Examples.TSG
-  (
+  ( runTSG
+  , testTSG
   ) where
 
 
@@ -14,10 +16,12 @@ import           Prelude hiding (splitAt, span)
 
 import qualified Data.Text as T
 import qualified Data.Set as S
+import qualified Data.Map.Strict as M
 
 import           ParComp.Patt
 import qualified ParComp.Patt.Item as I
 import           ParComp.Examples.Utils
+import qualified ParComp.SimpleParser as SP
 
 
 --------------------------------------------------
@@ -84,27 +88,8 @@ dot = nothing
 --------------------------------------------------
 
 
-type Rule = (T.Text, [T.Text])
-
-
--- -- | Make the grammar from the set of CFG rules and the input sentence.
--- mkGram :: [T.Text] -> S.Set Rule -> Grammar
--- mkGram sent cfgRules = Grammar
---   { leafs = leafs
---   , roots = roots
---   , inter = internals
---   }
---   where
---     -- Heads, roots, and leafs
---     heads = S.fromList . (++) sent $ do
---       (hd, _bd) <- S.toList cfgRules
---       return hd
---     children = S.fromList $ do
---       (_hd, bd) <- S.toList cfgRules
---       bd
---     internals = S.intersection heads children
---     leafs = children `S.difference` internals
---     roots = heads `S.difference` internals
+-- | Grammar rule
+type Rule = (Node, [Node])
 
 
 -- | Grammar
@@ -122,6 +107,27 @@ data Grammar = Grammar
 --   , inter  :: S.Set Node
 --     -- ^ Set of grammar internal nodes
   }
+
+-- | Make the grammar from the set of CFG rules and the input sentence.
+mkGram :: [T.Text] -> S.Set Rule -> Grammar
+mkGram sent rules = Grammar
+  { leafs = leafs
+  , roots = roots
+  , inter = internals
+  }
+  where
+    -- Heads, roots, and leafs
+    terms = map (encodeI . Right) sent
+    heads = S.fromList . (++) terms $ do
+      (hd, _bd) <- S.toList rules
+      return $ encodeI hd
+    children = S.fromList $ do
+      (_hd, bd) <- S.toList rules
+      map encodeI bd
+    internals = S.intersection heads children
+    leafs = children `S.difference` internals
+    roots = heads `S.difference` internals
+    encodeI = encode I.I
 
 
 --------------------------------------------------
@@ -181,65 +187,6 @@ internal gram =
 --------------------------------------------------
 
 
--- -- | TSG complete rule
--- complete :: Grammar -> Ty.Rule Item
--- complete gram =
---
---   Ty.Rule [leftP, rightP] downP condP
---
---   where
---
---     -- Variables
---     v_A = var "A"         :: Pattern Node
---     v_B = var "B"         :: Pattern Node
---     v_C = var "C"         :: Pattern Node
---     v_alpha = var "alpha" :: Pattern Body
---     v_beta = var "beta"   :: Pattern Body
---     v_i = var "i"         :: Pattern Int
---     v_j = var "j"         :: Pattern Int
---     v_k = var "k"         :: Pattern Int
---
---     leftP = item
---       (rule v_A
---         (via splitAtDot
---           (pair v_alpha (dot .: just v_B .: v_beta))
---         )
---       )
---       (span v_i v_j)
---
---     rightP = item
---       (rule v_C
---         (guard endsWithDotP)
---         -- (suffix $ dot .: nil)
---       )
---       (span v_j v_k)
---
---     condP = or
---       ( and
---           ( eq (map label v_B)
---                (map label v_C)
---           )
---           ( and (leaf gram v_B)
---                 (root gram v_C)
---           )
---       )
---       ( and
---           ( eq v_B v_C )
---           ( and (internal gram v_B)
---                 (internal gram v_C)
---           )
---       )
---
---     downP = item
---       (rule v_A
---         ( bimap Util.append
---             v_alpha
---             (just v_B .: dot .: v_beta)
---         )
---       )
---       (span v_i v_k)
-
-
 -- | TSG complete rule
 complete :: Grammar -> Ty PattFun (Item -> Item -> Item)
 complete gram =
@@ -265,27 +212,119 @@ complete gram =
         (rule a (apply append alpha (just b .: dot .: beta)))
         (span i k)
 
---     condP = or
---       ( and
---           ( eq (map label v_B)
---                (map label v_C)
---           )
---           ( and (leaf gram v_B)
---                 (root gram v_C)
---           )
---       )
---       ( and
---           ( eq v_B v_C )
---           ( and (internal gram v_B)
---                 (internal gram v_C)
---           )
---       )
---
---     downP = item
---       (rule v_A
---         ( apply append
---             v_alpha
---             (just v_B .: dot .: v_beta)
---         )
---       )
---       (span v_i v_k)
+
+-- | TSG predict rule
+predict :: Grammar -> Ty PattFun (Item -> Item -> Item)
+predict gram =
+  withVars $ \as b c i j rl ->
+    arg (item (rule anyp as) (span i j)) .
+    arg (top (rule c anyp `seqp` rl)) .
+    fun $
+      match
+        (pair anyp (dot .: just b .: anyp))
+        (apply splitAt dot as)
+        `seqp`
+      choice
+        ( match (label b) (label c) `seqp`
+          match (leaf gram b) true `seqp`
+          match (root gram c) true )
+        ( match b c `seqp`
+          match (internal gram b) true `seqp`
+          match (internal gram c) true )
+        `seqp`
+      item rl (span j j)
+
+
+-- | Compute the base items for the given sentence and grammar
+tsgBaseItems
+  :: [T.Text]
+    -- ^ Input sentence
+  -> S.Set Rule
+    -- ^ TSG rules
+  -> [Item]
+tsgBaseItems inp cfgRules =
+  base1 ++ base2 ++ baseRules
+  where
+    n = length inp
+    base1 = do
+      (hd, bd) <- S.toList cfgRules
+      return $ Left (mkRule hd bd, (0, 0))
+    base2 = do
+      (i, term) <- zip [0..n-1] inp
+      return $ Left (mkRule (Right term) [], (i, i + 1))
+    baseRules = do
+      (hd, bd) <- S.toList cfgRules
+      return $ Right (mkRule hd bd)
+    mkRule hd bd = (hd, Nothing : fmap Just bd)
+
+
+--------------------------------------------------
+-- Main
+--------------------------------------------------
+
+
+testRules :: S.Set Rule
+testRules = S.fromList $ fmap prepareRule
+   [ ("NP_1", ["N_2"])
+   , ("NP_3", ["DET_4", "N_5"])
+   -- NB: "NP_28" is an internal node (see below)
+   , ("S_6", ["NP_28", "VP_8"])
+   , ("VP_9", ["V_10"])
+   , ("VP_11", ["V_12", "Adv_13"])
+   , ("VP_14", ["Adv_15", "V_16"])
+   , ("VP_17", ["Adv_18", "V_19", "NP_20"])
+   , ("DET_21", ["a_1"])
+   , ("DET_22", ["some_2"])
+   , ("N_23", ["man_3"])
+   , ("N_24", ["pizza_4"])
+   , ("V_25", ["eats_5"])
+   , ("V_26", ["runs_6"])
+   , ("Adv_27", ["quickly_7"])
+   , ("NP_28", ["DET_29", "N_30"])
+   ]
+--   [ ("NP_1", ["DET_2", "N_3"])
+--   , ("DET_2", ["a_3"])
+--   , ("N_4", ["man_5"])
+--   ]
+  where
+    prepareRule (hd, bd) =
+      ( prepareNode hd
+      , fmap prepareNode bd
+      )
+    prepareNode x = case T.splitOn "_" x of
+      [term] -> Right term
+      [nonTerm, nodeId] -> Left (nonTerm, nodeId)
+      _ -> error $ "testRules: unhandled symbol (" ++ T.unpack x ++ ")"
+
+
+-- Input sentence
+testSent :: [T.Text]
+testSent = ["a", "man", "quickly", "eats", "some", "pizza"]
+-- testSent = ["a", "man"]
+
+
+-- Grammar
+testGram :: Grammar
+testGram = mkGram testSent testRules
+
+
+-- | Run the parser on the test grammar and sentence.
+runTSG :: IO (Maybe I.Item)
+runTSG = do
+  let baseItems = map (unTy . encode I.I) $ tsgBaseItems testSent testRules
+      ruleMap = M.fromList
+        [ ("CO", unTy $ complete testGram)
+        , ("PR", unTy $ predict testGram)
+        ]
+      zero = pos 0
+      slen = pos (length testSent)
+      finalPatt = unTy $ item anyp (span zero slen)
+  SP.chartParse baseItems ruleMap finalPatt
+
+
+-- | Run the parser on the test grammar and sentence.
+testTSG :: IO ()
+testTSG = do
+  runTSG >>= \case
+    Nothing -> putStrLn "# No parse found"
+    Just it -> print (decode (Ty it) :: Item)
